@@ -24,8 +24,26 @@ The system is built in three stages:
 - **Document Processing:** Docling
 - **Vector DB:** Milvus
 - **Agent Framework:** LangChain
-- **Evaluation:** RAGAS / Opik
+- **Evaluation:** RAGAS
 - **API:** FastAPI
+
+## Project Structure
+
+```
+apex-exercise-2/
+├── src/
+│   ├── evaluation/      # RAGAS evaluation framework
+│   └── rag/             # RAG pipeline (future)
+├── dataset-raw/         # Harel insurance documents
+├── scripts/             # Evaluation & utility scripts
+├── tests/               # Test suite
+├── plans/               # Implementation plans
+└── reference-questions.json
+```
+
+## Plans
+
+- [Evaluation Plan](plans/evaluation.md) - RAGAS evaluation framework design
 
 ## Documentation
 
