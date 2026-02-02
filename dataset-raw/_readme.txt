@@ -31,6 +31,20 @@ wget \
   https://www.harel-group.co.il/insurance/business/
 
 
+
+wget \
+  --recursive \
+  --level=3 \
+  --no-parent \
+  --page-requisites \
+  --adjust-extension \
+  --convert-links \
+  --span-hosts \
+  --accept-regex="information" \
+  --domains=harel-group.co.il \
+  https://www.harel-group.co.il/insurance/TOPIC-A/
+
+  
 #--domains=harel-group.co.il,media.harel-group.co.il \
 --accept-regex="media|policies" \
 
@@ -45,3 +59,11 @@ Ignore PDFs
 טופס-הצטרפות
 טופס-הודעה
 טופס-בקשה
+שאלון-לביטוח
+
+
+
+
+
+Remove HTMLs:
+ find dataset-raw  | grep "\.html" | grep 'https:/' | grep '\"'
