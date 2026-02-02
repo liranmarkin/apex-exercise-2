@@ -27,11 +27,21 @@ wget \
   --convert-links \
   --span-hosts \
   --accept-regex="policies" \
-  --wait=1 \
-  --limit-rate=200k \
   --domains=harel-group.co.il \
   https://www.harel-group.co.il/insurance/business/
 
 
 #--domains=harel-group.co.il,media.harel-group.co.il \
 --accept-regex="media|policies" \
+
+
+
+
+Ignore PDFs
+טופס-הצעה
+טופס-הקפאה
+טופס-ערעור
+טופס-שינוי
+טופס-הצטרפות
+טופס-הודעה
+טופס-בקשה
