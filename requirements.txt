@@ -14,5 +14,6 @@ python-dotenv>=1.0.0
 # RAG
 pymilvus>=2.6.8
 pymilvus[model]>=0.3.2
-pymilvus[milvus_lite]>=2.6.8
+milvus_lite>=2.5.1
 torch>=2.10.0
+transformers==44.57.6

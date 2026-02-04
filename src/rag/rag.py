@@ -32,7 +32,7 @@ class RAG:
         return res
 
     def query_collection(self, query: str, maximal_docs: int = 2):
-        vectors = self.embed.encode_querie([query])
+        vectors = self.embed.encode_queries([query])
         # TODO: filter insurance type
-        res = self.client.search(collection_name=self.collection, data=vectors, limit=maximal_docs)[0]
+        res = self.client.search(collection_name=self.collection, data=vectors, output_fields=["subject", "text"], limit=maximal_docs)[0]
         return res
