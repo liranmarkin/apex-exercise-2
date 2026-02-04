@@ -74,27 +74,68 @@ class TextExtractor(HTMLParser):
 
 
 class LinkExtractor(HTMLParser):
-    """HTML parser to extract href links from HTML content."""
+    """HTML parser to extract href links and their text from HTML content."""
     
     def __init__(self):
         super().__init__()
         self.links = []
+        self.link_dict = {}
+        self.current_link = None
+        self.current_text = []
     
     def handle_starttag(self, tag, attrs):
         if tag == 'a':
+            href = None
             for attr_name, attr_value in attrs:
                 if attr_name == 'href' and attr_value:
-                    self.links.append(attr_value)
+                    href = attr_value
+                    break
+            
+            if href:
+                self.links.append(href)
+                self.current_link = href
+                self.current_text = []
+    
+    def handle_endtag(self, tag):
+        if tag == 'a' and self.current_link:
+            # Get the text content of the link
+            link_text = ''.join(self.current_text).strip()
+            if link_text:
+                self.link_dict[link_text] = self.current_link
+            self.current_link = None
+            self.current_text = []
+    
+    def handle_data(self, data):
+        if self.current_link is not None:
+            self.current_text.append(data)
     
     def extract_links(self, html_content: str) -> List[str]:
         """Extract all href links from HTML content."""
         self.links = []
+        self.link_dict = {}
+        self.current_link = None
+        self.current_text = []
+        
         if html_content:
             try:
                 self.feed(html_content)
             except Exception as e:
                 print(f"Error parsing HTML: {e}")
         return self.links
+    
+    def extract_link_dict(self, html_content: str) -> Dict[str, str]:
+        """Extract links as a dictionary with text as keys and URLs as values."""
+        self.links = []
+        self.link_dict = {}
+        self.current_link = None
+        self.current_text = []
+        
+        if html_content:
+            try:
+                self.feed(html_content)
+            except Exception as e:
+                print(f"Error parsing HTML: {e}")
+        return self.link_dict
 
 
 def extract_plain_text(html_content: str) -> str:
@@ -163,6 +204,23 @@ def extract_links_from_text(text: str) -> List[str]:
     return extractor.extract_links(text)
 
 
+def extract_link_dict_from_text(text: str) -> Dict[str, str]:
+    """
+    Extract href links from HTML text content as a dictionary.
+    
+    Args:
+        text: HTML text content
+        
+    Returns:
+        Dictionary with link text as keys and URLs as values
+    """
+    if not text:
+        return {}
+    
+    extractor = LinkExtractor()
+    return extractor.extract_link_dict(text)
+
+
 def process_faq_content(data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Process FAQ data to extract links, clean text, and create plain text versions.
@@ -171,7 +229,7 @@ def process_faq_content(data: Dict[str, Any]) -> Dict[str, Any]:
         data: Original FAQ data dictionary
         
     Returns:
-        Processed FAQ data with more_reference links, cleaned text, and plain text answers
+        Processed FAQ data with more_reference links, hyperlinks dict, cleaned text, and plain text answers
     """
     if not isinstance(data, dict) or 'faqs' not in data:
         return data
@@ -183,17 +241,22 @@ def process_faq_content(data: Dict[str, Any]) -> Dict[str, Any]:
             continue
             
         all_links = []
+        all_hyperlinks = {}
         
         # Extract links and clean question
         question = faq.get('question', '')
         question_links = extract_links_from_text(question)
+        question_hyperlinks = extract_link_dict_from_text(question)
         all_links.extend(question_links)
+        all_hyperlinks.update(question_hyperlinks)
         faq['question'] = clean_text(question)
         
         # Extract links, clean answer, and create plain text version
         answer = faq.get('answer', '')
         answer_links = extract_links_from_text(answer)
+        answer_hyperlinks = extract_link_dict_from_text(answer)
         all_links.extend(answer_links)
+        all_hyperlinks.update(answer_hyperlinks)
         faq['answer'] = clean_text(answer)
         
         # Create plain text version of answer
@@ -205,8 +268,11 @@ def process_faq_content(data: Dict[str, Any]) -> Dict[str, Any]:
             if link not in unique_links:
                 unique_links.append(link)
         
-        # Add more_reference field
+        # Add more_reference field (existing functionality)
         faq['more_reference'] = unique_links
+        
+        # Add hyperlinks dictionary (new functionality)
+        faq['hyperlinks'] = all_hyperlinks
     
     return processed_data
 
