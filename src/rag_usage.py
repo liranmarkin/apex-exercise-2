@@ -17,5 +17,5 @@ for insurance_type in INSURANCE_TYPES:
     docs = load_docs(insurance_type)
     rag.insert_docs(insurance_type, docs)
 
-res = rag.query_collection("Who is Alan Turing?")
+res = rag.query_collection("Travel", "Who is Alan Turing?")
 print(res)
