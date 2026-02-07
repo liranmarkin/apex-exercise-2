@@ -1,7 +1,7 @@
 {
   "metadata": {
     "total_files": 13,
-    "source_directory": "/Users/sharonbrizinov/Desktop/Sharon/Course/APEX/harel/apex-exercise-2/dataset/dataset-parse/data",
+    "source_directory": "dataset-parse/data",
     "files_processed": [
       "topics-faq/business-faq-realfaq.json",
       "topics-faq/mortgage-faq-realfaq.json",
