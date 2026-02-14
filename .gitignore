@@ -1,3 +1,6 @@
+# Evaluation results
+evaluation_results/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
