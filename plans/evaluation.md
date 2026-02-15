@@ -8,8 +8,9 @@ RAGAS-based evaluation framework to measure RAG pipeline quality against competi
 | Competition Criteria | Weight | RAGAS Metric |
 |---------------------|--------|--------------|
 | Relevance | 65% | `answer_relevancy` |
-| Citation Accuracy | 15% | `context_precision`, `context_recall` |
-| Hallucination | - | `faithfulness` |
+| Citation Accuracy | 15% | Custom: predicted source (file + page) vs ground truth `מקור` |
+| Efficiency | 10% | Latency and token cost per query |
+| Conversational Quality | 10% | `faithfulness` + LLM-as-judge for tone/clarity |
 
 ## Configuration
 
@@ -20,7 +21,9 @@ RAGAS-based evaluation framework to measure RAG pipeline quality against competi
 
 ### 1. Dataset Loader (`src/evaluation/dataset.py`)
 - Loads `reference-questions.json`
+- Loads parsed documents from `dataset/dataset-output/dataset/` (6 JSON files: PDFs, policies, blogs, FAQs)
 - Converts to RAGAS-compatible HuggingFace Dataset format
+- Populates `answer` and `contexts` by running questions through the RAG pipeline
 - Expected structure:
   ```python
   {
@@ -37,8 +40,9 @@ RAGAS-based evaluation framework to measure RAG pipeline quality against competi
 - Outputs results to JSON
 
 ### 3. Baseline Script (`scripts/evaluate_baseline.py`)
-- Runs GPT-4o / GPT-5.2 directly (no RAG)
-- Establishes baseline scores for comparison
+- **Baseline mode:** GPT-4o / GPT-5.2 directly (no RAG)
+- **RAG mode:** Uses existing `RAG` class from `src/rag/rag.py`
+- Compares both to quantify RAG improvement
 
 ## Integration Flow
 
