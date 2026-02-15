@@ -1,30 +1,17 @@
 """
-Simple RAG stub — implements the interface but does no retrieval.
+Mock RAG — implements the same interface as RAG but does nothing.
 
-This is the dumbest possible baseline: just passes the question
-straight to the LLM with no context. Exists so the evaluation
-pipeline has a consistent interface to call.
+Matches the real RAG interface (insert_docs / query_collection)
+so it can be swapped in anywhere the real one is used.
 """
-
-from langchain_openai import ChatOpenAI
-
-SYSTEM_PROMPT = (
-    "אתה נציג שירות לקוחות של הראל ביטוח. "
-    "ענה על השאלה בצורה מדויקת ותמציתית בעברית. "
-    "אם אתה מצטט מסמך, ציין את שם הקובץ ומספר העמוד."
-)
 
 
 class MockRAG:
-    def __init__(self, model: str = "gpt-4o"):
-        self.llm = ChatOpenAI(model=model, temperature=0)
+    def __init__(self, reset_collection: bool = True):
+        pass
 
-    def retrieve(self, question: str, domain: str = "", top_k: int = 5) -> list[str]:
+    def insert_docs(self, insurance_type: str, docs: list[str]):
+        pass
+
+    def query_collection(self, insurance_type: str, query: str, maximal_docs: int = 2):
         return []
-
-    def answer(self, question: str, domain: str = "") -> tuple[str, list[str]]:
-        """Return (generated_answer, retrieved_contexts)."""
-        contexts = self.retrieve(question, domain)
-        prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {question}"
-        response = self.llm.invoke(prompt)
-        return response.content, contexts

@@ -45,18 +45,37 @@ def generate_rag_answers(
     samples: list[dict],
     model: str = "gpt-4o",
 ) -> tuple[list[str], list[list[str]], list[float]]:
-    """Retrieve contexts via MockRAG, then generate an answer."""
+    """Retrieve contexts via RAG.query_collection, then generate an answer."""
+    from langchain_openai import ChatOpenAI
+
     from rag.mock_rag import MockRAG
 
-    rag = MockRAG(model=model)
+    rag = MockRAG(reset_collection=False)
+    llm = ChatOpenAI(model=model, temperature=0)
 
     answers, contexts, latencies = [], [], []
     for sample in samples:
         start = time.time()
-        answer, ctx = rag.answer(sample["question"], domain=sample["domain"])
+
+        results = rag.query_collection(
+            sample["domain"].capitalize(), sample["question"], maximal_docs=5
+        )
+        retrieved_docs = [hit["entity"]["document"] for hit in results] if results else []
+        contexts.append(retrieved_docs)
+
+        if retrieved_docs:
+            context_str = "\n\n".join(retrieved_docs)
+            prompt = (
+                f"{SYSTEM_PROMPT}\n\n"
+                f"ענה בהתבסס אך ורק על המידע הבא:\n{context_str}\n\n"
+                f"שאלה: {sample['question']}"
+            )
+        else:
+            prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
+
+        response = llm.invoke(prompt)
         latencies.append(time.time() - start)
-        answers.append(answer)
-        contexts.append(ctx)
+        answers.append(response.content)
     return answers, contexts, latencies
 
 
