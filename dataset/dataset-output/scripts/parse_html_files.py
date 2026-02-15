@@ -22,6 +22,10 @@ class HTMLContentParser(HTMLParser):
         self.content_items = []
         self.current_tag = None
         self.current_text = []
+        self.current_links = []  # Track links within current tag
+        self.in_link = False
+        self.current_link_href = None
+        self.current_link_text = []
         self.in_script = False
         self.script_id = None
         self.script_content = []
@@ -31,6 +35,13 @@ class HTMLContentParser(HTMLParser):
         if tag in ['h1', 'h2', 'h3', 'p']:
             self.current_tag = tag
             self.current_text = []
+            self.current_links = []
+        elif tag == 'a' and self.current_tag:
+            # We're inside a content tag and found a link
+            self.in_link = True
+            self.current_link_text = []
+            attrs_dict = dict(attrs)
+            self.current_link_href = attrs_dict.get('href', '')
         elif tag == 'script':
             # Check if this is the __NEXT_DATA__ script
             attrs_dict = dict(attrs)
@@ -40,7 +51,18 @@ class HTMLContentParser(HTMLParser):
     
     def handle_endtag(self, tag):
         """Handle closing tags."""
-        if tag in ['h1', 'h2', 'h3', 'p'] and self.current_tag == tag:
+        if tag == 'a' and self.in_link:
+            # End of link tag
+            link_text = ''.join(self.current_link_text).strip()
+            if link_text and self.current_link_href:
+                self.current_links.append({
+                    'text': link_text,
+                    'link': self.current_link_href
+                })
+            self.in_link = False
+            self.current_link_href = None
+            self.current_link_text = []
+        elif tag in ['h1', 'h2', 'h3', 'p'] and self.current_tag == tag:
             text = ''.join(self.current_text).strip()
             if text:  # Only add non-empty text
                 self.content_items.append({
@@ -49,11 +71,14 @@ class HTMLContentParser(HTMLParser):
                 })
             self.current_tag = None
             self.current_text = []
+            self.current_links = []
         elif tag == 'script' and self.in_script:
             self.in_script = False
     
     def handle_data(self, data):
         """Handle text data within tags."""
+        if self.in_link:
+            self.current_link_text.append(data)
         if self.current_tag:
             self.current_text.append(data)
         elif self.in_script:
@@ -68,6 +93,24 @@ class HTMLContentParser(HTMLParser):
             except json.JSONDecodeError as e:
                 print(f"Error parsing __NEXT_DATA__ JSON: {e}", file=sys.stderr)
         return None
+
+
+def extract_hyperlinks_from_html(html_text: str) -> List[Dict[str, str]]:
+    """Extract all hyperlinks from HTML text."""
+    hyperlinks = []
+    # Pattern to match <a href="...">text</a>
+    link_pattern = r'<a\s+(?:[^>]*?\s+)?href=["\'](.*?)["\'](?:[^>]*)>(.*?)</a>'
+    matches = re.findall(link_pattern, html_text, re.IGNORECASE | re.DOTALL)
+    
+    for href, text in matches:
+        clean_text = clean_html(text)
+        if clean_text and href:
+            hyperlinks.append({
+                'text': clean_text,
+                'link': unescape(href)
+            })
+    
+    return hyperlinks
 
 
 def clean_html(html_text: str) -> str:
@@ -129,19 +172,29 @@ def extract_text_and_strhtml(data: Any, results: List[Dict[str, Any]]) -> None:
                 results.append({
                     'field': 'text',
                     'original': value,
-                    'clean': clean_html(value)
+                    'clean': clean_html(value),
+                    'hyperlinks': extract_hyperlinks_from_html(value)
                 })
             elif key == 'strHTML' and isinstance(value, str):
                 results.append({
                     'field': 'strHTML',
                     'original': value,
-                    'clean': clean_html(value)
+                    'clean': clean_html(value),
+                    'hyperlinks': extract_hyperlinks_from_html(value)
                 })
             else:
                 extract_text_and_strhtml(value, results)
     elif isinstance(data, list):
         for item in data:
             extract_text_and_strhtml(item, results)
+
+
+def trim_path(path_str: str) -> str:
+    """Trim everything before 'dataset-parse/data' in the path."""
+    if 'dataset-parse/data' in path_str:
+        start_idx = path_str.index('dataset-parse/data')
+        return path_str[start_idx:]
+    return path_str
 
 
 def parse_html_file(file_path: Path) -> Dict[str, Any]:
@@ -167,8 +220,8 @@ def parse_html_file(file_path: Path) -> Dict[str, Any]:
                 item['index'] = idx
         
         return {
-            'file_path': str(file_path.absolute()),
-            'url': create_url_from_path(file_path),
+            'file_path': trim_path(str(file_path.absolute())),
+            'url': create_url_from_path(file_path).replace(".html",""),
             'topic': extract_topic_from_path(file_path),
             'filename': file_path.name,
             'content': parser.content_items,
@@ -223,7 +276,7 @@ def main():
     # Create output structure
     output_data = {
         'total_files': len(results),
-        'source_directory': str(Path(input_directory).absolute()),
+        'source_directory': trim_path(str(Path(input_directory).absolute())),
         'files': results
     }
     

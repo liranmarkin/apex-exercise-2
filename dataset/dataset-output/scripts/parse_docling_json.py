@@ -7,8 +7,43 @@ Extracts text, hyperlinks, and file paths into a single JSON output.
 import json
 import os
 import sys
+import csv
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
+
+def load_pdf_url_mapping(csv_path: str = '_db_pdf.csv') -> Dict[str, str]:
+    """Load PDF URL mapping from CSV file.
+    
+    Returns a dict mapping PDF filename to its real URL.
+    """
+    pdf_mapping = {}
+    
+    if not os.path.exists(csv_path):
+        print(f"Warning: PDF mapping file not found: {csv_path}", file=sys.stderr)
+        return pdf_mapping
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                pdf_url = row.get('pdf_url', '')
+                if pdf_url:
+                    # Extract filename from URL (last part after /)
+                    filename = pdf_url.split('/')[-1]
+                    pdf_mapping[filename] = pdf_url
+    except Exception as e:
+        print(f"Error loading PDF mapping: {e}", file=sys.stderr)
+    
+    return pdf_mapping
+
+
+def trim_path(path_str: str) -> str:
+    """Trim everything before 'dataset-parse/data' in the path."""
+    if 'dataset-parse/data' in path_str:
+        start_idx = path_str.index('dataset-parse/data')
+        return path_str[start_idx:]
+    return path_str
 
 
 def decode_text(text: str) -> str:
@@ -18,10 +53,90 @@ def decode_text(text: str) -> str:
     return text
 
 
+def extract_page_number(item: Dict[str, Any]) -> int:
+    """Extract page number from prov field if exists."""
+    if 'prov' in item and isinstance(item['prov'], list) and len(item['prov']) > 0:
+        prov = item['prov'][0]
+        if isinstance(prov, dict) and 'page_no' in prov:
+            return prov['page_no']
+    return None
+
+
+def parse_table(table_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Parse table data into structured format with rows and columns."""
+    if 'data' not in table_data or 'table_cells' not in table_data['data']:
+        return None
+    
+    cells = table_data['data']['table_cells']
+    if not cells:
+        return None
+    
+    # Find table dimensions
+    max_row = max(cell.get('end_row_offset_idx', 0) for cell in cells)
+    max_col = max(cell.get('end_col_offset_idx', 0) for cell in cells)
+    
+    # Create a grid to hold cell data
+    grid = [[None for _ in range(max_col)] for _ in range(max_row)]
+    
+    # Fill the grid with cell data
+    for cell in cells:
+        start_row = cell.get('start_row_offset_idx', 0)
+        start_col = cell.get('start_col_offset_idx', 0)
+        end_row = cell.get('end_row_offset_idx', start_row + 1)
+        end_col = cell.get('end_col_offset_idx', start_col + 1)
+        
+        cell_info = {
+            'text': cell.get('text', ''),
+            'row_span': cell.get('row_span', 1),
+            'col_span': cell.get('col_span', 1),
+            'is_header': cell.get('column_header', False) or cell.get('row_header', False)
+        }
+        
+        # Place cell in grid (only at start position for merged cells)
+        if start_row < max_row and start_col < max_col:
+            grid[start_row][start_col] = cell_info
+    
+    # Convert grid to rows format
+    rows = []
+    for row_idx, row in enumerate(grid):
+        row_data = {
+            'row_index': row_idx,
+            'cells': []
+        }
+        for col_idx, cell in enumerate(row):
+            if cell is not None:
+                row_data['cells'].append({
+                    'col_index': col_idx,
+                    'text': cell['text'],
+                    'row_span': cell['row_span'],
+                    'col_span': cell['col_span'],
+                    'is_header': cell['is_header']
+                })
+        if row_data['cells']:  # Only add non-empty rows
+            rows.append(row_data)
+    
+    return {
+        'rows': rows,
+        'row_count': max_row,
+        'col_count': max_col
+    }
+
+
 def extract_content_from_json(data: Any, content_items: List[Dict[str, Any]]) -> None:
-    """Recursively extract text and hyperlinks, keeping them together."""
+    """Recursively extract text, hyperlinks, page numbers, and tables."""
     if isinstance(data, dict):
-        # Check if this dict has both text and hyperlink
+        # Check if this is a table
+        if data.get('label') == 'table':
+            table_data = parse_table(data)
+            if table_data:
+                content_items.append({
+                    'type': 'table',
+                    'table': table_data,
+                    'page_number': extract_page_number(data),
+                    'hyperlink': None
+                })
+        
+        # Check if this dict has text
         text_value = None
         hyperlink_value = None
         
@@ -33,11 +148,13 @@ def extract_content_from_json(data: Any, content_items: List[Dict[str, Any]]) ->
                 hyperlink_value = data[key]
                 break
         
-        # If we found text, add it with its hyperlink (if any)
+        # If we found text, add it with its metadata
         if text_value:
             content_items.append({
+                'type': 'text',
                 'text': text_value,
-                'hyperlink': hyperlink_value
+                'hyperlink': hyperlink_value,
+                'page_number': extract_page_number(data)
             })
         
         # Continue recursing through all values
@@ -80,8 +197,11 @@ def extract_topic_from_path(file_path: Path) -> str:
     return None
 
 
-def create_url_from_path(file_path: Path) -> str:
-    """Create URL from file path, starting from www.harel-group.co.il."""
+def create_url_from_path(file_path: Path, pdf_mapping: Optional[Dict[str, str]] = None) -> str:
+    """Create URL from file path, starting from www.harel-group.co.il.
+    
+    For PDF files, looks up the real URL from the pdf_mapping dictionary.
+    """
     # Get the path parts after finding 'www.harel-group.co.il' in the path
     path_str = str(file_path)
     
@@ -97,6 +217,15 @@ def create_url_from_path(file_path: Path) -> str:
     original_ext = get_original_file_extension(file_path)
     url_path = url_path.replace('.json', original_ext)
     
+    # For PDF files, try to find the real URL from the mapping
+    if original_ext == '.pdf' and pdf_mapping:
+        # Extract the PDF filename from the path
+        pdf_filename = Path(url_path).name
+        
+        if pdf_filename in pdf_mapping:
+            # Return the real PDF URL from the mapping
+            return pdf_mapping[pdf_filename]
+    
     # Ensure it starts with https://
     if not url_path.startswith('http'):
         url_path = 'https://' + url_path
@@ -104,7 +233,7 @@ def create_url_from_path(file_path: Path) -> str:
     return url_path
 
 
-def parse_json_file(file_path: Path) -> Dict[str, Any]:
+def parse_json_file(file_path: Path, pdf_mapping: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     """Parse a single JSON file and extract relevant information."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -119,8 +248,8 @@ def parse_json_file(file_path: Path) -> Dict[str, Any]:
             item['index'] = idx
         
         return {
-            'file_path': str(file_path.absolute()),
-            'url': create_url_from_path(file_path),
+            'file_path': trim_path(str(file_path.absolute())),
+            'url': create_url_from_path(file_path, pdf_mapping).replace(".html",""),
             'topic': extract_topic_from_path(file_path),
             'content': content_items,
             'content_count': len(content_items)
@@ -130,7 +259,7 @@ def parse_json_file(file_path: Path) -> Dict[str, Any]:
         return None
 
 
-def process_directory(directory: str) -> List[Dict[str, Any]]:
+def process_directory(directory: str, pdf_mapping: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
     """Process all JSON files in directory and subdirectories."""
     directory_path = Path(directory)
     
@@ -147,7 +276,7 @@ def process_directory(directory: str) -> List[Dict[str, Any]]:
     
     for json_file in json_files:
         print(f"Processing: {json_file}")
-        parsed_data = parse_json_file(json_file)
+        parsed_data = parse_json_file(json_file, pdf_mapping)
         if parsed_data:
             results.append(parsed_data)
     
@@ -156,23 +285,30 @@ def process_directory(directory: str) -> List[Dict[str, Any]]:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python parse_docling_json.py <directory> [output_file]")
+        print("Usage: python parse_docling_json.py <directory> [output_file] [pdf_csv]")
         print("  <directory>   : Directory containing JSON files")
         print("  [output_file] : Optional output JSON file (default: parsed_output.json)")
+        print("  [pdf_csv]     : Optional PDF URL mapping CSV file (default: _db_pdf.csv)")
         sys.exit(1)
     
     input_directory = sys.argv[1]
     output_file = sys.argv[2] if len(sys.argv) > 2 else 'parsed_output.json'
+    pdf_csv = sys.argv[3] if len(sys.argv) > 3 else '_db_pdf.csv'
     
     print(f"Processing directory: {input_directory}")
     
+    # Load PDF URL mapping
+    print(f"Loading PDF URL mapping from: {pdf_csv}")
+    pdf_mapping = load_pdf_url_mapping(pdf_csv)
+    print(f"Loaded {len(pdf_mapping)} PDF URL mappings")
+    
     # Process all JSON files
-    results = process_directory(input_directory)
+    results = process_directory(input_directory, pdf_mapping)
     
     # Create output structure
     output_data = {
         'total_files': len(results),
-        'source_directory': str(Path(input_directory).absolute()),
+        'source_directory': trim_path(str(Path(input_directory).absolute())),
         'files': results
     }
     
