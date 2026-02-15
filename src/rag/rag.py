@@ -1,10 +1,12 @@
+from typing import Generator
+
 from pymilvus import MilvusClient, DataType, model
 
-from constants import DB_PATH, COLLECTION_NAME
+from constants import DB_PATH, COLLECTION_NAME, InsuranceType
 
 
 class RAG:
-    def __init__(self, reset_collection: bool = True):
+    def __init__(self, reset_collection: bool = False):
         self.embeder = self._get_embeder()
         self.collection = COLLECTION_NAME
         self.client = self._get_db_client(DB_PATH)
@@ -22,14 +24,16 @@ class RAG:
     def _get_db_client(self, db_path: str):
         client = MilvusClient(db_path)
         return client
-    
+
     def _get_schema(self):
         schema = self.client.create_schema()
         schema.add_field(field_name="id", is_primary=True, auto_id=True, datatype=DataType.INT64)
-        schema.add_field(field_name="embed", datatype=DataType.FLOAT_VECTOR, dim=self.embeder.dim)
-        schema.add_field(field_name="insurance_type", datatype=DataType.VARCHAR, max_length=50)
-        # TODO: updata document datatype
-        schema.add_field(field_name="document", datatype=DataType.VARCHAR, max_length=1000)
+        schema.add_field(field_name="embeding", datatype=DataType.FLOAT_VECTOR, dim=self.embeder.dim)
+        schema.add_field(field_name="insurance_type", datatype=DataType.INT8)
+        schema.add_field(field_name="full_doc", datatype=DataType.VARCHAR, max_length=10000)
+        schema.add_field(field_name="url", datatype=DataType.VARCHAR, max_length=1000)
+        schema.add_field(field_name="page_index", datatype=DataType.INT8)
+        schema.add_field(field_name="hyperlinks", datatype=DataType.JSON)
         return schema
 
     def _reset_collection(self):
@@ -39,17 +43,34 @@ class RAG:
 
     def _create_indices(self):
         index_params = self.client.prepare_index_params()
-        index_params.add_index(field_name="embed", metric_type="COSINE")
+        index_params.add_index(field_name="embeding", metric_type="COSINE")
         self.client.create_index(self.collection, index_params)
 
-    def insert_docs(self, insurance_type: str, docs: list[str]):
-        embeds = self.embeder.encode_documents(docs)
-        data = [{"embed": embeds[i], "insurance_type": insurance_type, "document": docs[i]} for i in range(len(docs))]
+    def insert_doc(self, chunk: str, insurance_type: InsuranceType, full_doc: str, url: str, page_index: int = -1, hyperlinks: dict[str, str] = dict()):
+        embeding = self.embeder.encode_documents([chunk])[0]
+        data = [{
+            "embeding": embeding,
+            "insurance_type": insurance_type.value,
+            "full_doc": full_doc,
+            "url": url,
+            "page_index": page_index,
+            "hyperlinks": hyperlinks
+        }]
         res = self.client.insert(collection_name=self.collection, data=data)
         return res
 
-    def query_collection(self, insurance_type: str, query: str, maximal_docs: int = 2):
+    def load_data_from_generator(self, generator: Generator[dict, None, None]):
+        for kwargs in generator:
+            self.insert_doc(**kwargs)
+
+    def query_collection(self, insurance_type: InsuranceType, query: str, maximal_docs: int = 2):
         vectors = self.embeder.encode_queries([query])
-        filter = f"insurance_type == '{insurance_type}'"
-        res = self.client.search(collection_name=self.collection, data=vectors, filter=filter, output_fields=["document"], limit=maximal_docs)[0]
+        filter = f"insurance_type == {insurance_type.value}"
+        output_fields = [
+            "full_doc",
+            "url",
+            "page_index",
+            "hyperlinks",
+        ]
+        res = self.client.search(collection_name=self.collection, data=vectors, filter=filter, output_fields=output_fields, limit=maximal_docs)[0]
         return res
