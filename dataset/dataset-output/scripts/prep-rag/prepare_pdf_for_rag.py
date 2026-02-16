@@ -559,7 +559,6 @@ class PDFDataProcessor:
                         chunk_text, chunk_type = chunk
                         full_table_data_str += chunk_text + "\n"
                     
-                        
                     # Yield a segment for each chunk
                     for chunk_text, chunk_type in chunks:
                         yield PDFSegment(
