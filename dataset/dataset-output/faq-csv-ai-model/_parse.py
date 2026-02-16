@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 
 import sys
+import re
+
+
+def clean_field(value: str) -> str:
+    # Strip whitespace first
+    value = value.strip()
+
+    # Remove leading/trailing quotes
+    value = value.strip('"')
+
+    # Remove leading/trailing whitespace again (in case quotes had spaces)
+    value = re.sub(r'^\s+|\s+$', '', value)
+
+    return value
+
 
 def parse_line(line: str):
     line = line.strip()
@@ -14,9 +29,9 @@ def parse_line(line: str):
     if first_comma == -1 or last_comma == -1 or first_comma == last_comma:
         raise ValueError(f"Invalid line format (needs at least 2 commas): {line}")
 
-    question = line[:first_comma].strip()
-    answer = line[first_comma + 1:last_comma].strip()
-    url = line[last_comma + 1:].strip()
+    question = clean_field(line[:first_comma])
+    answer = clean_field(line[first_comma + 1:last_comma])
+    url = clean_field(line[last_comma + 1:])
 
     return {
         "question": question,
