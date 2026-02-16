@@ -145,6 +145,64 @@ class PDFDataProcessor:
         """
         return len(text.split())
     
+    def _get_cross_page_context(self, url: str, page_number: int, chunk_text: str) -> str:
+        """
+        Get context that includes adjacent pages if chunk might span pages.
+        
+        Args:
+            url: URL of the document
+            page_number: Current page number
+            chunk_text: The chunk text to check
+            
+        Returns:
+            Context string that may include adjacent pages
+        """
+        cache_key = f"{url}#page{page_number}"
+        current_page = self.page_cache.get(cache_key, '')
+        
+        # Check if we need previous page context
+        prev_cache_key = f"{url}#page{page_number - 1}"
+        next_cache_key = f"{url}#page{page_number + 1}"
+        
+        # For now, include adjacent pages if they exist
+        # This provides richer context for boundary chunks
+        parts = []
+        
+        if prev_cache_key in self.page_cache:
+            parts.append(f"[עמוד קודם {page_number - 1}]\n{self.page_cache[prev_cache_key]}")
+        
+        parts.append(f"[עמוד נוכחי {page_number}]\n{current_page}")
+        
+        if next_cache_key in self.page_cache:
+            parts.append(f"[עמוד הבא {page_number + 1}]\n{self.page_cache[next_cache_key]}")
+        
+        return '\n\n'.join(parts)
+    
+    def _get_table_context(self, url: str, page_number: int, table_index: int) -> str:
+        """
+        Get text context surrounding a table on the page.
+        
+        Args:
+            url: URL of the document
+            page_number: Page number
+            table_index: Index of the table on the page
+            
+        Returns:
+            Context text before the table
+        """
+        cache_key = f"{url}#page{page_number}"
+        page_items = self.page_content.get(cache_key, {})
+        
+        # Get text items before this table
+        text_items = page_items.get('text_items', [])
+        if not text_items:
+            return ""
+        
+        # Take last 2-3 text items as context
+        context_items = text_items[-3:] if len(text_items) >= 3 else text_items
+        context_texts = [self._normalize_text(item.get('text', '')) for item in context_items]
+        return ' '.join(context_texts)
+    
     def _create_chunks(self, text: str) -> List[tuple]:
         """
         Create overlapping chunks from text if it exceeds threshold.
@@ -192,44 +250,70 @@ class PDFDataProcessor:
         return chunks
     
     def _build_page_cache(self):
-        """Build cache of full page text for each URL and page number."""
-        self.page_cache = {}
-        self.table_cache = {}  # Cache for full table data
+        """Build cache of full page text and organize content by page."""
+        self.page_cache = {}  # Full page context (text + tables)
+        self.page_full_text = {}  # Full page text (text items only, concatenated)
+        self.page_content = {}  # Organized content items by page
         
         for file_entry in self.data.get('files', []):
             url = self._normalize_url(file_entry.get('url', ''))
             content = file_entry.get('content', [])
             
             # Group content by page number
-            pages = {}
+            pages_text = {}  # For text items only
+            pages_all = {}   # For all content (text + tables)
+            pages_items = {}  # Store actual content items
+            
             for item in content:
                 page_num = item.get('page_number')
                 if page_num is None:
                     continue
+                
+                if page_num not in pages_items:
+                    pages_items[page_num] = {'text_items': [], 'table_items': []}
                     
                 if item.get('type') == 'text':
                     text = item.get('text', '').strip()
                     # Normalize text
                     text = self._normalize_text(text)
-                    if page_num not in pages:
-                        pages[page_num] = []
+                    
+                    if page_num not in pages_text:
+                        pages_text[page_num] = []
+                    if page_num not in pages_all:
+                        pages_all[page_num] = []
+                    
                     if text:
-                        pages[page_num].append(text)
+                        pages_text[page_num].append(text)
+                        pages_all[page_num].append(text)
+                        pages_items[page_num]['text_items'].append(item)
                         
                 elif item.get('type') == 'table':
                     # Store table representation
                     table_text = self._table_to_text(item.get('table', {}))
                     # Normalize table text
                     table_text = self._normalize_text(table_text)
-                    if page_num not in pages:
-                        pages[page_num] = []
+                    
+                    if page_num not in pages_all:
+                        pages_all[page_num] = []
+                    
                     if table_text:
-                        pages[page_num].append(f"[TABLE]\n{table_text}")
+                        pages_all[page_num].append(f"[טבלה]\n{table_text}")
+                        pages_items[page_num]['table_items'].append(item)
             
-            # Store concatenated text for each page
-            for page_num, texts in pages.items():
+            # Store full page text (text items only, concatenated)
+            for page_num, texts in pages_text.items():
+                cache_key = f"{url}#page{page_num}"
+                self.page_full_text[cache_key] = '\n\n'.join(texts)
+            
+            # Store all content for context
+            for page_num, texts in pages_all.items():
                 cache_key = f"{url}#page{page_num}"
                 self.page_cache[cache_key] = '\n'.join(texts)
+            
+            # Store organized content items
+            for page_num, items in pages_items.items():
+                cache_key = f"{url}#page{page_num}"
+                self.page_content[cache_key] = items
     
     def _table_to_text(self, table: Dict) -> str:
         """
@@ -291,12 +375,14 @@ class PDFDataProcessor:
         sorted_cells = sorted(cells, key=lambda c: c.get('col_index', 0))
         return [self._normalize_text(cell.get('text', '')) for cell in sorted_cells]
     
-    def _create_table_chunks(self, table: Dict) -> List[tuple]:
+    def _create_table_chunks(self, table: Dict, context_text: str = "") -> List[tuple]:
         """
-        Create chunks from table: each chunk is headers + one data row.
+        Create chunks from table with context chunks before full table.
+        Each row chunk formats as "header[0] is row[0], header[1] is row[1]".
         
         Args:
             table: Table dictionary with rows
+            context_text: Surrounding text context for the table
             
         Returns:
             List of (chunk_text, chunk_type) tuples
@@ -308,13 +394,32 @@ class PDFDataProcessor:
         if not rows:
             return []
         
+        chunks = []
+        
         # Get full table text
         full_table = self._table_to_text(table)
-        chunks = [(full_table, "full")]
+        
+        # Add 2 context chunks before full table (if context available)
+        if context_text:
+            # Context chunk 1: Just the context text
+            chunks.append((context_text, "table_context_1"))
+            
+            # Context chunk 2: Context + table preview (first 2 rows)
+            table_preview_rows = rows[:min(2, len(rows))]
+            preview_lines = []
+            for row in table_preview_rows:
+                cells = row.get('cells', [])
+                sorted_cells = sorted(cells, key=lambda c: c.get('col_index', 0))
+                cell_texts = [self._normalize_text(cell.get('text', '')) for cell in sorted_cells]
+                preview_lines.append(' | '.join(cell_texts))
+            table_preview = '\n'.join(preview_lines)
+            chunks.append((f"{context_text}\n\n[טבלה]\n{table_preview}", "table_context_2"))
+        
+        # Add full table
+        chunks.append((full_table, "full"))
         
         # Extract headers
         headers = self._extract_table_headers(table)
-        header_text = ' | '.join(headers)
         
         # Find first data row index (skip header rows)
         data_start_idx = 0
@@ -324,101 +429,50 @@ class PDFDataProcessor:
                 data_start_idx = i
                 break
         
-        # Create chunk for each data row (headers + row)
+        # Create chunk for each data row formatted as "header is value"
         for i in range(data_start_idx, len(rows)):
             row = rows[i]
             cells = row.get('cells', [])
             sorted_cells = sorted(cells, key=lambda c: c.get('col_index', 0))
             # Normalize cell text
             cell_texts = [self._normalize_text(cell.get('text', '')) for cell in sorted_cells]
-            row_text = ' | '.join(cell_texts)
             
-            chunk_text = f"{header_text}\n{row_text}"
+            # Format as "header[0] is row[0], header[1] is row[1], ..."
+            pairs = []
+            for j, (header, value) in enumerate(zip(headers, cell_texts)):
+                if header and value:  # Only include non-empty pairs
+                    pairs.append(f"ה-{header} הוא {value}")
+            
+            chunk_text = ', '.join(pairs)
             chunk_type = f"table_row_{i - data_start_idx + 1}"
             chunks.append((chunk_text, chunk_type))
         
         return chunks
     
-    def get_pdf_segment(self, file_index: int, content_index: int) -> Optional[List[PDFSegment]]:
+    def get_pdf_segment(self, file_index: int, page_number: int) -> Optional[List[PDFSegment]]:
         """
-        Get specific PDF segment(s) by file and content index.
-        Returns multiple segments if text is chunked or if it's a table with rows.
+        Get all PDF segments for a specific page in a file.
+        Returns multiple segments: full page text chunks + table chunks.
         
         Args:
             file_index: Index of the file in the files array
-            content_index: Index of the content item in content array
+            page_number: Page number to retrieve
             
         Returns:
-            List of PDFSegment objects (multiple if chunked/table) or None if not found
+            List of PDFSegment objects for the page or None if not found
         """
         try:
             file_entry = self.data['files'][file_index]
-            content_item = file_entry['content'][content_index]
-            
             url = self._normalize_url(file_entry.get('url', ''))
             topic = file_entry.get('topic', '')
-            page_number = content_item.get('page_number')
             
-            if page_number is None:
-                return None
+            # Get all segments for this page
+            segments = []
+            for segment in self.iter_all_segments():
+                if segment.url == url and segment.page_number == page_number:
+                    segments.append(segment)
             
-            # Get entire page data
-            cache_key = f"{url}#page{page_number}"
-            entire_page_data = self.page_cache.get(cache_key, '')
-            
-            content_type = content_item.get('type')
-            
-            if content_type == 'text':
-                # Process text content
-                text = content_item.get('text', '').strip()
-                # Normalize text
-                text = self._normalize_text(text)
-                if not text:
-                    return None
-                
-                # Create chunks
-                chunks = self._create_chunks(text)
-                
-                # Create PDFSegment for each chunk
-                segments = []
-                for chunk_text, chunk_type in chunks:
-                    segments.append(PDFSegment(
-                        topic=topic,
-                        page_chunk=chunk_text,
-                        entire_page_data=entire_page_data,
-                        page_number=page_number,
-                        url=url,
-                        chunk_type=chunk_type,
-                        content_type='text'
-                    ))
-                
-                return segments
-                
-            elif content_type == 'table':
-                # Process table content
-                table = content_item.get('table', {})
-                if not table:
-                    return None
-                
-                # Create table chunks (full table + header+row chunks)
-                chunks = self._create_table_chunks(table)
-                
-                # Create PDFSegment for each chunk
-                segments = []
-                for chunk_text, chunk_type in chunks:
-                    segments.append(PDFSegment(
-                        topic=topic,
-                        page_chunk=chunk_text,
-                        entire_page_data=entire_page_data,
-                        page_number=page_number,
-                        url=url,
-                        chunk_type=chunk_type,
-                        content_type='table'
-                    ))
-                
-                return segments
-            
-            return None
+            return segments if segments else None
             
         except (IndexError, KeyError):
             return None
@@ -426,8 +480,8 @@ class PDFDataProcessor:
     def iter_all_segments(self) -> Generator[PDFSegment, None, None]:
         """
         Iterator that yields all PDF segments from all files.
-        Yields multiple segments per text if chunking is applied.
-        Yields multiple segments per table (full table + header+row chunks).
+        Processes full pages: extracts full page text first, then chunks pages.
+        For tables, includes context chunks before full table.
         
         Yields:
             PDFSegment objects
@@ -436,55 +490,82 @@ class PDFDataProcessor:
             topic = file_entry.get('topic', '')
             url = self._normalize_url(file_entry.get('url', ''))
             
+            # Group content by page
+            pages = {}
             for content_item in file_entry.get('content', []):
-                content_type = content_item.get('type')
                 page_number = content_item.get('page_number')
-                
                 if page_number is None:
                     continue
                 
-                # Get entire page data
+                if page_number not in pages:
+                    pages[page_number] = {'text_items': [], 'table_items': []}
+                
+                if content_item.get('type') == 'text':
+                    pages[page_number]['text_items'].append(content_item)
+                elif content_item.get('type') == 'table':
+                    pages[page_number]['table_items'].append(content_item)
+            
+            # Process each page
+            for page_number in sorted(pages.keys()):
+                page_data = pages[page_number]
+                
+                # Get full page context (may include adjacent pages for boundary chunks)
                 cache_key = f"{url}#page{page_number}"
                 entire_page_data = self.page_cache.get(cache_key, '')
                 
-                if content_type == 'text':
-                    # Process text content
-                    text = content_item.get('text', '').strip()
-                    # Normalize text
-                    text = self._normalize_text(text)
-                    if not text:
-                        continue
+                # Process text: concatenate all text items on page, then chunk
+                text_items = page_data['text_items']
+                if text_items:
+                    # Get full page text (text items only)
+                    full_page_text = self.page_full_text.get(cache_key, '')
                     
-                    # Create chunks
-                    chunks = self._create_chunks(text)
-                    
-                    # Yield a segment for each chunk
-                    for chunk_text, chunk_type in chunks:
-                        yield PDFSegment(
-                            topic=topic,
-                            page_chunk=chunk_text,
-                            entire_page_data=entire_page_data,
-                            page_number=page_number,
-                            url=url,
-                            chunk_type=chunk_type,
-                            content_type='text'
-                        )
+                    if full_page_text:
+                        # Create chunks from full page text
+                        chunks = self._create_chunks(full_page_text)
                         
-                elif content_type == 'table':
-                    # Process table content
-                    table = content_item.get('table', {})
+                        # For chunks that might span pages, use cross-page context
+                        for chunk_text, chunk_type in chunks:
+                            # Use cross-page context for non-full chunks
+                            if chunk_type != "full":
+                                context = self._get_cross_page_context(url, page_number, chunk_text)
+                            else:
+                                context = entire_page_data
+                            
+                            yield PDFSegment(
+                                topic=topic,
+                                page_chunk=chunk_text,
+                                entire_page_data=context,
+                                page_number=page_number,
+                                url=url,
+                                chunk_type=chunk_type,
+                                content_type='text'
+                            )
+                
+                # Process tables
+                table_items = page_data['table_items']
+                for table_idx, table_item in enumerate(table_items):
+                    table = table_item.get('table', {})
                     if not table:
                         continue
                     
-                    # Create table chunks
-                    chunks = self._create_table_chunks(table)
+                    # Get context text for this table
+                    table_context = self._get_table_context(url, page_number, table_idx)
                     
+                    # Create table chunks (with context chunks)
+                    chunks = self._create_table_chunks(table, context_text=table_context)
+                    
+                    full_table_data_str = ""
+                    for chunk in chunks:
+                        chunk_text, chunk_type = chunk
+                        full_table_data_str += chunk_text + "\n"
+                    
+                        
                     # Yield a segment for each chunk
                     for chunk_text, chunk_type in chunks:
                         yield PDFSegment(
                             topic=topic,
                             page_chunk=chunk_text,
-                            entire_page_data=entire_page_data,
+                            entire_page_data=full_table_data_str, #entire_page_data,
                             page_number=page_number,
                             url=url,
                             chunk_type=chunk_type,
@@ -551,6 +632,7 @@ class PDFDataProcessor:
         text_segments = 0
         table_segments = 0
         table_rows = 0
+        table_context_chunks = 0
         
         for segment in self.iter_all_segments():
             total_chunks += 1
@@ -562,8 +644,11 @@ class PDFDataProcessor:
                     table_segments += 1
             else:
                 chunked_segments += 1
-                if segment.content_type == 'table' and segment.chunk_type.startswith('table_row_'):
-                    table_rows += 1
+                if segment.content_type == 'table':
+                    if segment.chunk_type.startswith('table_row_'):
+                        table_rows += 1
+                    elif segment.chunk_type.startswith('table_context_'):
+                        table_context_chunks += 1
             topics.add(segment.topic)
             urls.add(segment.url)
             pages.add(f"{segment.url}#page{segment.page_number}")
@@ -573,6 +658,7 @@ class PDFDataProcessor:
             'total_segments': total_segments,
             'text_segments': text_segments,
             'table_segments': table_segments,
+            'table_context_chunks': table_context_chunks,
             'table_row_chunks': table_rows,
             'total_chunks_including_overlaps': total_chunks,
             'additional_chunks_created': chunked_segments,
@@ -611,13 +697,14 @@ def demonstrate_usage(json_file_path: str, chunk_threshold: int = 50):
     print(f"  Available topics: {', '.join(stats['topics_list'])}")
     print()
     
-    # Example 1: Get first PDF segment
-    print("📄 EXAMPLE 1: Get specific PDF segment (file_index=0, content_index=0)")
+    # Example 1: Get first PDF page segments
+    print("📄 EXAMPLE 1: Get all segments for a specific page (file_index=0, page=1)")
     print("-" * 80)
-    segments = processor.get_pdf_segment(0, 0)
+    segments = processor.get_pdf_segment(0, 1)
     if segments:
-        for i, segment in enumerate(segments):
-            print(f"  Chunk {i+1}/{len(segments)} (type: {segment.chunk_type}):")
+        print(f"  Found {len(segments)} segments on page 1:")
+        for i, segment in enumerate(segments[:3]):  # Show first 3
+            print(f"  Segment {i+1} (type: {segment.chunk_type}, content: {segment.content_type}):")
             print(f"    Topic: {segment.topic}")
             print(f"    URL: {segment.url}")
             print(f"    Page: {segment.page_number}")
@@ -626,7 +713,9 @@ def demonstrate_usage(json_file_path: str, chunk_threshold: int = 50):
             if i == 0:
                 print(f"    Entire page length: {len(segment.entire_page_data)} characters")
             print()
-    
+        if len(segments) > 3:
+            print(f"  ... and {len(segments) - 3} more segments")
+    print()
     # Example 2: Show chunking in action
     print("📋 EXAMPLE 2: Demonstrate chunking on longer text")
     print("-" * 80)
@@ -670,8 +759,8 @@ def demonstrate_usage(json_file_path: str, chunk_threshold: int = 50):
             print(f"  First segment page: {topic_segments[0].page_number}")
         print()
     
-    # Example 4: Show table processing
-    print("📊 EXAMPLE 4: Demonstrate table processing")
+    # Example 4: Show table processing with new formatting
+    print("📊 EXAMPLE 4: Demonstrate table processing (with context and 'header is value' format)")
     print("-" * 80)
     found_table = False
     for segment in processor.iter_all_segments():
@@ -684,20 +773,27 @@ def demonstrate_usage(json_file_path: str, chunk_threshold: int = 50):
             
             # Get all chunks for this table
             page_segments = processor.get_segments_by_page(segment.url, segment.page_number)
-            table_chunks = [s for s in page_segments 
-                          if s.content_type == 'table' and s.page_chunk == segment.page_chunk]
             
-            # Find row chunks
+            # Find context chunks
+            context_chunks = [s for s in page_segments 
+                            if s.content_type == 'table' and s.chunk_type.startswith('table_context_')]
+            
+            if context_chunks:
+                print(f"  Created {len(context_chunks)} context chunks before table:")
+                for chunk in context_chunks:
+                    print(f"    - {chunk.chunk_type}:")
+                    print(f"      {chunk.page_chunk[:100]}...")
+                    print()
+            
+            # Find row chunks with new formatting
             row_chunks = [s for s in page_segments 
                          if s.content_type == 'table' and s.chunk_type.startswith('table_row_')]
             
             if row_chunks:
-                print(f"  Created {len(row_chunks)} row chunks (headers + individual rows):")
-                for i, chunk in enumerate(row_chunks[:3]):  # Show first 3
+                print(f"  Created {len(row_chunks)} row chunks (formatted as 'header is value'):")
+                for i, chunk in enumerate(row_chunks[:2]):  # Show first 2
                     print(f"    - {chunk.chunk_type}:")
-                    lines = chunk.page_chunk.split('\n')
-                    for line in lines[:2]:  # Show header and row
-                        print(f"      {line[:70]}...")
+                    print(f"      {chunk.page_chunk[:150]}...")
                     print()
             
             found_table = True
@@ -729,7 +825,7 @@ def demonstrate_usage(json_file_path: str, chunk_threshold: int = 50):
     # Example 6: Export to JSON format
     print("💾 EXAMPLE 6: Export segment to JSON format")
     print("-" * 80)
-    segments = processor.get_pdf_segment(0, 0)
+    segments = processor.get_pdf_segment(0, 1)
     if segments:
         segment = segments[0]
         json_output = json.dumps(segment.to_dict(), ensure_ascii=False, indent=2)
