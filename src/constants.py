@@ -14,3 +14,22 @@ class InsuranceType(Enum):
     BUSINESS = 6
     DENTAL = 7
     MORTGAGE = 8
+
+    @classmethod
+    def from_string(cls, name):
+        if name == "travel":
+            return cls.TRAVEL
+        if name == "health":
+            return cls.HEALTH
+        if name == "car":
+            return cls.CAR
+        if name == "apartment":
+            return cls.APARTMENT
+        if name == "life":
+            return cls.LIFE
+        if name == "business":
+            return cls.BUSINESS
+        if name == "dental":
+            return cls.DENTAL
+        if name == "mortgage":
+            return cls.MORTGAGE
