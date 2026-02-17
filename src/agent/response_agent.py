@@ -18,7 +18,7 @@ from rag.mock_rag import MockRAG
 
 # Initialize RAG and LLM
 rag = MockRAG()
-llm = ChatNebius(model="openai/gpt-oss-120b", api_key=NEBIUS_API_KEY)
+llm = ChatNebius(model="openai/gpt-oss-20b", api_key=NEBIUS_API_KEY)
 
 
 # ============== ANSWER GENERATION ==============

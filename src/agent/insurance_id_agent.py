@@ -16,7 +16,7 @@ from constants import InsuranceType, NEBIUS_API_KEY
 
 
 # Initialize LLM
-llm = ChatNebius(model="openai/gpt-oss-120b", api_key=NEBIUS_API_KEY)
+llm = ChatNebius(model="meta-llama/Meta-Llama-3.1-8B-Instruct-fast", api_key=NEBIUS_API_KEY)
 
 
 # ============== INSURANCE TYPE IDENTIFICATION ==============
