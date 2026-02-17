@@ -4,8 +4,8 @@ datasets>=2.14.0
 
 # LangChain
 langchain>=0.1.0
-langchain-openai>=0.0.5
 langchain-community>=0.0.10
+langchain-core>=0.1.0
 
 # Utilities
 pandas>=2.0.0
@@ -14,6 +14,15 @@ python-dotenv>=1.0.0
 # RAG
 pymilvus>=2.6.8
 pymilvus[model]>=0.3.2
-milvus_lite>=2.5.1
-torch>=2.10.0
-transformers==44.57.6
+pymilvus[milvus-lite]>=2.5.1
+# torch
+# transformers
+# API
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart
+
+# Nebius
+langchain-nebius
+langchain-huggingface
+sentence-transformers
