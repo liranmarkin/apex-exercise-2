@@ -214,3 +214,6 @@ __marimo__/
 dataset/dataset-parse*/*
 dataset/dataset-parse/*
 dataset/dataset-raw
+
+# Milvus lock files
+*.db.lock
