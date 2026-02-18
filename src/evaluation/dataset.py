@@ -1,13 +1,10 @@
 """
 Dataset loader for RAGAS evaluation.
 
-Loads reference-questions.json and converts to evaluation-ready format,
-aligned to the reference questions schema:
-  {
-    "domain_he": [
-      { "שאלה": str, "תשובה": str, "מקור": { "קובץ": str, "עמוד": int } }
-    ]
-  }
+Loads reference questions JSON and converts to evaluation-ready format.
+Supports two source formats:
+  - PDF sources:  { "שאלה": str, "תשובה": str, "מקור": { "קובץ": str, "עמוד": int } }
+  - FAQ sources:  { "שאלה": str, "תשובה": str, "מקור": { "כתובת": str } }
 """
 
 import json
@@ -29,7 +26,7 @@ DOMAIN_MAP = {
 }
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-REFERENCE_QUESTIONS_PATH = os.path.join(PROJECT_ROOT, "reference-questions.json")
+REFERENCE_QUESTIONS_PATH = os.path.join(PROJECT_ROOT, "reference-questions-extended.json")
 
 
 def load_reference_questions(path: Optional[str] = None) -> list[dict]:
@@ -55,13 +52,14 @@ def load_reference_questions(path: Optional[str] = None) -> list[dict]:
     for domain_he, questions in data.items():
         domain_en = DOMAIN_MAP.get(domain_he, domain_he)
         for q in questions:
+            source = q.get("מקור", {})
             samples.append({
                 "question": q["שאלה"],
                 "ground_truth": q["תשובה"],
                 "domain": domain_en,
                 "domain_he": domain_he,
-                "source_file": q["מקור"]["קובץ"],
-                "source_page": q["מקור"]["עמוד"],
+                "source_file": source.get("קובץ", source.get("כתובת", "")),
+                "source_page": source.get("עמוד", 0),
             })
 
     return samples

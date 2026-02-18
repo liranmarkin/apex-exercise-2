@@ -5,6 +5,7 @@ Usage:
   uv run python scripts/evaluate_baseline.py --mode baseline --model gpt-4o
   uv run python scripts/evaluate_baseline.py --mode rag
   uv run python scripts/evaluate_baseline.py --mode both
+  uv run python scripts/evaluate_baseline.py --questions reference-questions-extended.json
 """
 
 import argparse
@@ -25,11 +26,28 @@ def main():
     parser.add_argument("--mode", choices=["baseline", "rag", "both"], default="baseline")
     parser.add_argument("--model", default="gpt-4o")
     parser.add_argument("--output-dir", default="evaluation_results")
+    parser.add_argument(
+        "--questions",
+        default=None,
+        help="Path to reference questions JSON (default: reference-questions-extended.json)",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Number of parallel LLM calls (default: 5)",
+    )
     args = parser.parse_args()
 
     modes = ["baseline", "rag"] if args.mode == "both" else [args.mode]
     for mode in modes:
-        run_evaluation(mode=mode, model=args.model, output_dir=args.output_dir)
+        run_evaluation(
+            mode=mode,
+            model=args.model,
+            output_dir=args.output_dir,
+            questions_path=args.questions,
+            max_concurrency=args.concurrency,
+        )
 
 
 if __name__ == "__main__":
