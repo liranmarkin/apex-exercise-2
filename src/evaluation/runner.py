@@ -164,7 +164,7 @@ def run_evaluation(
     dataset = build_ragas_dataset(samples, answers, contexts)
 
     # Evaluate
-    evaluator = RAGASEvaluator()
+    evaluator = RAGASEvaluator(max_workers=max_concurrency)
     has_contexts = any(len(c) > 0 for c in contexts)
     if has_contexts:
         metrics = evaluator.evaluate_rag(dataset)

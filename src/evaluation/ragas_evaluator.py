@@ -17,6 +17,7 @@ from typing import Optional
 import numpy as np
 from datasets import Dataset
 from ragas import evaluate
+from ragas.run_config import RunConfig
 
 # Use the legacy import path — the "collections" metrics don't satisfy
 # evaluate()'s isinstance(m, Metric) check in ragas 0.4.x.
@@ -46,8 +47,9 @@ def _aggregate_scores(result) -> dict:
 
 
 class RAGASEvaluator:
-    def __init__(self, judge_model: str = "gpt-4o"):
+    def __init__(self, judge_model: str = "gpt-4o", max_workers: int = 16):
         self.judge_model = judge_model
+        self.max_workers = max_workers
         self.results = None
 
     def _build_llm(self):
@@ -68,18 +70,24 @@ class RAGASEvaluator:
     def evaluate_rag(self, dataset: Dataset) -> dict:
         """Run full RAGAS suite (requires contexts)."""
         metrics = [Faithfulness(), AnswerRelevancy(), ContextPrecision(), ContextRecall()]
+        run_config = RunConfig(max_workers=self.max_workers, max_retries=10, max_wait=120)
         result = evaluate(
             dataset, metrics=metrics,
             llm=self._build_llm(), embeddings=self._build_embeddings(),
+            run_config=run_config,
+            batch_size=self.max_workers,
         )
         self.results = result
         return _aggregate_scores(result)
 
     def evaluate_baseline(self, dataset: Dataset) -> dict:
         """Run only answer-level metrics (no retrieval contexts)."""
+        run_config = RunConfig(max_workers=self.max_workers, max_retries=10, max_wait=120)
         result = evaluate(
             dataset, metrics=[AnswerRelevancy()],
             llm=self._build_llm(), embeddings=self._build_embeddings(),
+            run_config=run_config,
+            batch_size=self.max_workers,
         )
         self.results = result
         return _aggregate_scores(result)
