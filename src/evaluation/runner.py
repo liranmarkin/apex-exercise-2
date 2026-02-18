@@ -145,7 +145,7 @@ def run_evaluation(
         per_question.append(entry)
 
     # Save
-    label = f"{mode}_{model.replace('.', '_')}" if mode == "baseline" else "rag"
+    label = f"{mode}_{model.replace('.', '_')}"
     output_path = os.path.join(output_dir, f"{label}.json")
     result = evaluator.save_results(output_path, metrics, competition_score, per_question)
 
