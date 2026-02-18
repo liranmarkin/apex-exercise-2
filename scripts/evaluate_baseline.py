@@ -37,6 +37,12 @@ def main():
         default=5,
         help="Number of parallel LLM calls (default: 5)",
     )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max number of questions to evaluate",
+    )
     args = parser.parse_args()
 
     modes = ["baseline", "rag"] if args.mode == "both" else [args.mode]
@@ -47,6 +53,7 @@ def main():
             output_dir=args.output_dir,
             questions_path=args.questions,
             max_concurrency=args.concurrency,
+            max_questions=args.limit,
         )
 
 
