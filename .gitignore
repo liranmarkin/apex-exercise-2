@@ -217,3 +217,9 @@ dataset/dataset-raw
 
 # Milvus lock files
 *.db.lock
+
+# Large data files (download via: ./scripts/download_data.sh)
+dataset/dataset-output/
+dataset/dataset-parse-1.zip
+dataset/dataset-raw.zip
+db/harel.db
