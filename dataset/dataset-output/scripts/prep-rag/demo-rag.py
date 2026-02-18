@@ -9,11 +9,13 @@ documents_faq = []
 # For each entry, create a document for your RAG system
 for entry in entries:
     document = {
-        'content': entry['formatted_qa'],      # Main text for embedding
+        'content': entry['question'],      # Main text for embedding
         'metadata': {
             'topic': entry['topic'],
             'url': entry['url'],
             'question': entry['question'],
+            'answer': entry['answer'],
+            'formatted_qa': entry['formatted_qa'],
             'hyperlinks': entry['hyperlinks']
         }
     }

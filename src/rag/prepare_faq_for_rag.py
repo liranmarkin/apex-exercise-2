@@ -68,6 +68,7 @@ class FAQDataExtractor:
                 faq_entry = {
                     'topic': topic,
                     'question': question,
+                    'answer': answer_text,
                     'formatted_qa': formatted_qa,
                     'hyperlinks': hyperlinks,
                     'url': source_url

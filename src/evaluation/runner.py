@@ -5,9 +5,23 @@ Keeps all orchestration logic in one place so scripts stay thin.
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from constants import InsuranceType
 
 from .dataset import build_ragas_dataset, load_reference_questions
 from .ragas_evaluator import RAGASEvaluator
+
+DOMAIN_TO_INSURANCE_TYPE = {
+    "travel": InsuranceType.TRAVEL,
+    "health": InsuranceType.HEALTH,
+    "car": InsuranceType.CAR,
+    "apartment": InsuranceType.APARTMENT,
+    "life": InsuranceType.LIFE,
+    "business": InsuranceType.BUSINESS,
+    "dental": InsuranceType.DENTAL,
+    "mortgage": InsuranceType.MORTGAGE,
+}
 
 SYSTEM_PROMPT = (
     "אתה נציג שירות לקוחות של הראל ביטוח. "
@@ -21,47 +35,76 @@ SYSTEM_PROMPT = (
 # ------------------------------------------------------------------
 
 
+def _print_progress(done: int, total: int, start_time: float):
+    elapsed = time.time() - start_time
+    rate = done / elapsed if elapsed > 0 else 0
+    eta = (total - done) / rate if rate > 0 else 0
+    print(f"  [{done}/{total}] {elapsed:.1f}s elapsed, {rate:.1f} q/s, ETA {eta:.0f}s", flush=True)
+
+
 def generate_baseline_answers(
     samples: list[dict],
     model: str = "gpt-4o",
+    max_concurrency: int = 1,
 ) -> tuple[list[str], list[list[str]], list[float]]:
     """Send each question directly to the LLM (no retrieval)."""
     from langchain_openai import ChatOpenAI
 
     llm = ChatOpenAI(model=model, temperature=0)
+    total = len(samples)
+    results = [None] * total
+    pipeline_start = time.time()
 
-    answers, contexts, latencies = [], [], []
-    for sample in samples:
+    def _process(idx: int):
+        sample = samples[idx]
         start = time.time()
         prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
         response = llm.invoke(prompt)
-        latencies.append(time.time() - start)
-        answers.append(response.content)
-        contexts.append([])
+        latency = time.time() - start
+        return idx, response.content, [], latency
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+        futures = {pool.submit(_process, i): i for i in range(total)}
+        for future in as_completed(futures):
+            idx, answer, ctx, latency = future.result()
+            results[idx] = (answer, ctx, latency)
+            done += 1
+            if done % max(1, total // 10) == 0 or done == total:
+                _print_progress(done, total, pipeline_start)
+
+    answers = [r[0] for r in results]
+    contexts = [r[1] for r in results]
+    latencies = [r[2] for r in results]
+    print(f"  Completed {total} questions in {time.time() - pipeline_start:.1f}s")
     return answers, contexts, latencies
 
 
 def generate_rag_answers(
     samples: list[dict],
     model: str = "gpt-4o",
+    max_concurrency: int = 1,
 ) -> tuple[list[str], list[list[str]], list[float]]:
     """Retrieve contexts via RAG.query_collection, then generate an answer."""
     from langchain_openai import ChatOpenAI
 
-    from rag.mock_rag import MockRAG
+    from rag.rag import RAG
 
-    rag = MockRAG(reset_collection=False)
+    rag = RAG(reset_collection=False)
     llm = ChatOpenAI(model=model, temperature=0)
+    total = len(samples)
+    results = [None] * total
+    pipeline_start = time.time()
 
-    answers, contexts, latencies = [], [], []
-    for sample in samples:
+    def _process(idx: int):
+        sample = samples[idx]
         start = time.time()
 
-        results = rag.query_collection(
-            sample["domain"].capitalize(), sample["question"], maximal_docs=5
+        insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
+        hits = rag.query_collection(
+            insurance_type, sample["question"], maximal_docs=5
         )
-        retrieved_docs = [hit["entity"]["document"] for hit in results] if results else []
-        contexts.append(retrieved_docs)
+        retrieved_docs = [hit["entity"]["full_doc"] for hit in hits] if hits else []
 
         if retrieved_docs:
             context_str = "\n\n".join(retrieved_docs)
@@ -74,8 +117,23 @@ def generate_rag_answers(
             prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
 
         response = llm.invoke(prompt)
-        latencies.append(time.time() - start)
-        answers.append(response.content)
+        latency = time.time() - start
+        return idx, response.content, retrieved_docs, latency
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
+        futures = {pool.submit(_process, i): i for i in range(total)}
+        for future in as_completed(futures):
+            idx, answer, ctx, latency = future.result()
+            results[idx] = (answer, ctx, latency)
+            done += 1
+            if done % max(1, total // 10) == 0 or done == total:
+                _print_progress(done, total, pipeline_start)
+
+    answers = [r[0] for r in results]
+    contexts = [r[1] for r in results]
+    latencies = [r[2] for r in results]
+    print(f"  Completed {total} questions in {time.time() - pipeline_start:.1f}s")
     return answers, contexts, latencies
 
 
@@ -88,6 +146,9 @@ def run_evaluation(
     mode: str,
     model: str = "gpt-4o",
     output_dir: str = "evaluation_results",
+    questions_path: str | None = None,
+    max_concurrency: int = 5,
+    max_questions: int | None = None,
 ) -> dict:
     """
     End-to-end: load questions → generate answers → evaluate → save.
@@ -99,22 +160,28 @@ def run_evaluation(
 
     os.makedirs(output_dir, exist_ok=True)
 
-    samples = load_reference_questions()
+    samples = load_reference_questions(questions_path)
+    if max_questions:
+        samples = samples[:max_questions]
     domains = {s["domain"] for s in samples}
     print(f"Loaded {len(samples)} questions across {len(domains)} domains: {domains}")
 
     # Generate answers
     print(f"\n--- {mode} ({model}) ---")
     if mode == "baseline":
-        answers, contexts, latencies = generate_baseline_answers(samples, model=model)
+        answers, contexts, latencies = generate_baseline_answers(
+            samples, model=model, max_concurrency=max_concurrency,
+        )
     else:
-        answers, contexts, latencies = generate_rag_answers(samples, model=model)
+        answers, contexts, latencies = generate_rag_answers(
+            samples, model=model, max_concurrency=max_concurrency,
+        )
 
     # Build RAGAS dataset
     dataset = build_ragas_dataset(samples, answers, contexts)
 
     # Evaluate
-    evaluator = RAGASEvaluator()
+    evaluator = RAGASEvaluator(max_workers=max_concurrency)
     has_contexts = any(len(c) > 0 for c in contexts)
     if has_contexts:
         metrics = evaluator.evaluate_rag(dataset)
@@ -145,7 +212,7 @@ def run_evaluation(
         per_question.append(entry)
 
     # Save
-    label = f"{mode}_{model.replace('.', '_')}" if mode == "baseline" else "rag"
+    label = f"{mode}_{model.replace('.', '_')}"
     output_path = os.path.join(output_dir, f"{label}.json")
     result = evaluator.save_results(output_path, metrics, competition_score, per_question)
 
