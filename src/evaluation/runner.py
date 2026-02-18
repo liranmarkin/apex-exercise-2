@@ -7,8 +7,21 @@ Keeps all orchestration logic in one place so scripts stay thin.
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from constants import InsuranceType
+
 from .dataset import build_ragas_dataset, load_reference_questions
 from .ragas_evaluator import RAGASEvaluator
+
+DOMAIN_TO_INSURANCE_TYPE = {
+    "travel": InsuranceType.TRAVEL,
+    "health": InsuranceType.HEALTH,
+    "car": InsuranceType.CAR,
+    "apartment": InsuranceType.APARTMENT,
+    "life": InsuranceType.LIFE,
+    "business": InsuranceType.BUSINESS,
+    "dental": InsuranceType.DENTAL,
+    "mortgage": InsuranceType.MORTGAGE,
+}
 
 SYSTEM_PROMPT = (
     "אתה נציג שירות לקוחות של הראל ביטוח. "
@@ -75,9 +88,9 @@ def generate_rag_answers(
     """Retrieve contexts via RAG.query_collection, then generate an answer."""
     from langchain_openai import ChatOpenAI
 
-    from rag.mock_rag import MockRAG
+    from rag.rag import RAG
 
-    rag = MockRAG(reset_collection=False)
+    rag = RAG(reset_collection=False)
     llm = ChatOpenAI(model=model, temperature=0)
     total = len(samples)
     results = [None] * total
@@ -87,10 +100,11 @@ def generate_rag_answers(
         sample = samples[idx]
         start = time.time()
 
+        insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
         hits = rag.query_collection(
-            sample["domain"].capitalize(), sample["question"], maximal_docs=5
+            insurance_type, sample["question"], maximal_docs=5
         )
-        retrieved_docs = [hit["entity"]["document"] for hit in hits] if hits else []
+        retrieved_docs = [hit["entity"]["full_doc"] for hit in hits] if hits else []
 
         if retrieved_docs:
             context_str = "\n\n".join(retrieved_docs)
@@ -134,6 +148,7 @@ def run_evaluation(
     output_dir: str = "evaluation_results",
     questions_path: str | None = None,
     max_concurrency: int = 5,
+    max_questions: int | None = None,
 ) -> dict:
     """
     End-to-end: load questions → generate answers → evaluate → save.
@@ -146,6 +161,8 @@ def run_evaluation(
     os.makedirs(output_dir, exist_ok=True)
 
     samples = load_reference_questions(questions_path)
+    if max_questions:
+        samples = samples[:max_questions]
     domains = {s["domain"] for s in samples}
     print(f"Loaded {len(samples)} questions across {len(domains)} domains: {domains}")
 
