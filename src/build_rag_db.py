@@ -1,3 +1,5 @@
+import argparse
+import itertools
 import json
 
 from constants import InsuranceType
@@ -46,13 +48,28 @@ def html_wrapper(json_path: str):
         yield kwargs
 
 
-def rebuild_rag():
+def rebuild_rag(limit: int | None = None):
     rag = RAG(reset_collection=True)
-    rag.load_data_from_generator(faq_wrapper("dataset/dataset-output/dataset/topics-faq.json"))
-    rag.load_data_from_generator(pdf_wrapper("dataset/dataset-output/dataset/topics-pdf-docling.json"))
-    rag.load_data_from_generator(html_wrapper("dataset/dataset-output/dataset/topic-information-blogs-manual-html-parse.json"))
-    rag.load_data_from_generator(html_wrapper("dataset/dataset-output/dataset/topics-policies-manual-html-parse.json"))
+
+    sources = [
+        ("FAQ", faq_wrapper("dataset/dataset-output/dataset/topics-faq.json")),
+        ("PDF", pdf_wrapper("dataset/dataset-output/dataset/topics-pdf-docling.json")),
+        ("Blogs", html_wrapper("dataset/dataset-output/dataset/topic-information-blogs-manual-html-parse.json")),
+        ("Policies", html_wrapper("dataset/dataset-output/dataset/topics-policies-manual-html-parse.json")),
+    ]
+
+    for name, gen in sources:
+        if limit:
+            gen = itertools.islice(gen, limit)
+        print(f"Loading {name}...")
+        rag.load_data_from_generator(gen)
+        print(f"  {name} done.")
+
     return rag
 
 if __name__ == "__main__":
-    rebuild_rag()
+    parser = argparse.ArgumentParser(description="Build RAG vector DB")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Max docs to ingest per source (for testing)")
+    args = parser.parse_args()
+    rebuild_rag(limit=args.limit)

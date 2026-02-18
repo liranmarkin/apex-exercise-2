@@ -84,8 +84,12 @@ def generate_rag_answers(
     samples: list[dict],
     model: str = "gpt-4o",
     max_concurrency: int = 1,
-) -> tuple[list[str], list[list[str]], list[float]]:
-    """Retrieve contexts via RAG.query_collection, then generate an answer."""
+) -> tuple[list[str], list[list[str]], list[float], list[list[dict]]]:
+    """Retrieve contexts via RAG.query_collection, then generate an answer.
+
+    Returns (answers, contexts, latencies, retrieved_sources) where
+    retrieved_sources is a list of [{url, page_index, distance}, ...] per question.
+    """
     from langchain_openai import ChatOpenAI
 
     from rag.rag import RAG
@@ -105,6 +109,14 @@ def generate_rag_answers(
             insurance_type, sample["question"], maximal_docs=5
         )
         retrieved_docs = [hit["entity"]["full_doc"] for hit in hits] if hits else []
+        sources = [
+            {
+                "url": hit["entity"].get("url", ""),
+                "page_index": hit["entity"].get("page_index", -1),
+                "distance": hit.get("distance", 0),
+            }
+            for hit in hits
+        ] if hits else []
 
         if retrieved_docs:
             context_str = "\n\n".join(retrieved_docs)
@@ -118,23 +130,24 @@ def generate_rag_answers(
 
         response = llm.invoke(prompt)
         latency = time.time() - start
-        return idx, response.content, retrieved_docs, latency
+        return idx, response.content, retrieved_docs, sources, latency
 
     done = 0
     with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
         futures = {pool.submit(_process, i): i for i in range(total)}
         for future in as_completed(futures):
-            idx, answer, ctx, latency = future.result()
-            results[idx] = (answer, ctx, latency)
+            idx, answer, ctx, srcs, latency = future.result()
+            results[idx] = (answer, ctx, srcs, latency)
             done += 1
             if done % max(1, total // 10) == 0 or done == total:
                 _print_progress(done, total, pipeline_start)
 
     answers = [r[0] for r in results]
     contexts = [r[1] for r in results]
-    latencies = [r[2] for r in results]
+    retrieved_sources = [r[2] for r in results]
+    latencies = [r[3] for r in results]
     print(f"  Completed {total} questions in {time.time() - pipeline_start:.1f}s")
-    return answers, contexts, latencies
+    return answers, contexts, latencies, retrieved_sources
 
 
 # ------------------------------------------------------------------
@@ -162,18 +175,28 @@ def run_evaluation(
 
     samples = load_reference_questions(questions_path)
     if max_questions:
-        samples = samples[:max_questions]
+        # Sample evenly across domains instead of taking first N
+        from collections import defaultdict
+        by_domain = defaultdict(list)
+        for s in samples:
+            by_domain[s["domain"]].append(s)
+        per_domain = max(1, max_questions // len(by_domain))
+        sampled = []
+        for domain_samples in by_domain.values():
+            sampled.extend(domain_samples[:per_domain])
+        samples = sampled[:max_questions]
     domains = {s["domain"] for s in samples}
     print(f"Loaded {len(samples)} questions across {len(domains)} domains: {domains}")
 
     # Generate answers
+    retrieved_sources = None
     print(f"\n--- {mode} ({model}) ---")
     if mode == "baseline":
         answers, contexts, latencies = generate_baseline_answers(
             samples, model=model, max_concurrency=max_concurrency,
         )
     else:
-        answers, contexts, latencies = generate_rag_answers(
+        answers, contexts, latencies, retrieved_sources = generate_rag_answers(
             samples, model=model, max_concurrency=max_concurrency,
         )
 
@@ -203,12 +226,12 @@ def run_evaluation(
             "domain": sample["domain"],
             "ground_truth": sample["ground_truth"],
             "generated_answer": answers[i],
-            "source_file": sample["source_file"],
-            "source_page": sample["source_page"],
             "latency_s": latencies[i],
         }
         if has_contexts:
             entry["contexts"] = contexts[i]
+        if retrieved_sources:
+            entry["retrieved_sources"] = retrieved_sources[i]
         per_question.append(entry)
 
     # Save

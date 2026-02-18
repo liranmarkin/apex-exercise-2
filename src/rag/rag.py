@@ -59,9 +59,35 @@ class RAG:
         res = self.client.insert(collection_name=self.collection, data=data)
         return res
 
-    def load_data_from_generator(self, generator: Generator[dict, None, None]):
+    def load_data_from_generator(self, generator: Generator[dict, None, None], batch_size: int = 64):
+        batch = []
+        total = 0
         for kwargs in generator:
-            self.insert_doc(**kwargs)
+            batch.append(kwargs)
+            if len(batch) >= batch_size:
+                self._insert_batch(batch)
+                total += len(batch)
+                print(f"    Inserted {total} docs", flush=True)
+                batch = []
+        if batch:
+            self._insert_batch(batch)
+            total += len(batch)
+            print(f"    Inserted {total} docs (done)", flush=True)
+
+    def _insert_batch(self, batch: list[dict]):
+        chunks = [item["chunk"] for item in batch]
+        embeddings = self.embeder.encode_documents(chunks)
+        data = []
+        for item, emb in zip(batch, embeddings):
+            data.append({
+                "embeding": emb,
+                "insurance_type": item["insurance_type"].value,
+                "full_doc": item.get("full_doc", ""),
+                "url": item.get("url", ""),
+                "page_index": item.get("page_index", -1),
+                "hyperlinks": item.get("hyperlinks", {}),
+            })
+        self.client.insert(collection_name=self.collection, data=data)
 
     def query_collection(self, insurance_type: InsuranceType, query: str, maximal_docs: int = 2):
         vectors = self.embeder.encode_queries([query])
