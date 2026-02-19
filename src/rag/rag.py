@@ -1,8 +1,12 @@
+import logging
+import time
 from typing import Generator
 
 from pymilvus import MilvusClient, DataType, model
 
 from constants import DB_PATH, COLLECTION_NAME, InsuranceType
+
+logger = logging.getLogger(__name__)
 
 
 class RAG:
@@ -59,35 +63,63 @@ class RAG:
         res = self.client.insert(collection_name=self.collection, data=data)
         return res
 
-    def load_data_from_generator(self, generator: Generator[dict, None, None], batch_size: int = 64):
+    def load_data_from_generator(self, generator: Generator[dict, None, None], batch_size: int = 64, on_batch_inserted: callable = None):
         batch = []
         total = 0
+        start_time = time.time()
         for kwargs in generator:
             batch.append(kwargs)
             if len(batch) >= batch_size:
                 self._insert_batch(batch)
                 total += len(batch)
-                print(f"    Inserted {total} docs", flush=True)
+                elapsed = time.time() - start_time
+                rate = total / elapsed if elapsed > 0 else 0
+                print(f"    Inserted {total} docs [{elapsed:.1f}s elapsed, {rate:.0f} docs/s]", flush=True)
+                if on_batch_inserted:
+                    on_batch_inserted(len(batch), total)
                 batch = []
         if batch:
             self._insert_batch(batch)
             total += len(batch)
-            print(f"    Inserted {total} docs (done)", flush=True)
+            elapsed = time.time() - start_time
+            print(f"    Inserted {total} docs (done) [{elapsed:.1f}s total]", flush=True)
+            if on_batch_inserted:
+                on_batch_inserted(len(batch), total)
+        return total
 
-    def _insert_batch(self, batch: list[dict]):
-        chunks = [item["chunk"] for item in batch]
-        embeddings = self.embeder.encode_documents(chunks)
-        data = []
-        for item, emb in zip(batch, embeddings):
-            data.append({
-                "embeding": emb,
-                "insurance_type": item["insurance_type"].value,
-                "full_doc": item.get("full_doc", ""),
-                "url": item.get("url", ""),
-                "page_index": item.get("page_index", -1),
-                "hyperlinks": item.get("hyperlinks", {}),
-            })
-        self.client.insert(collection_name=self.collection, data=data)
+    def _insert_batch(self, batch: list[dict], max_retries: int = 3, base_delay: float = 1.0):
+        batch = [item for item in batch if item.get("insurance_type") is not None]
+        if not batch:
+            return
+        last_exception = None
+        for attempt in range(max_retries + 1):
+            try:
+                chunks = [item["chunk"] for item in batch]
+                embeddings = self.embeder.encode_documents(chunks)
+                data = []
+                for item, emb in zip(batch, embeddings):
+                    data.append({
+                        "embeding": emb,
+                        "insurance_type": item["insurance_type"].value,
+                        "full_doc": item.get("full_doc", ""),
+                        "url": item.get("url", ""),
+                        "page_index": item.get("page_index", -1),
+                        "hyperlinks": item.get("hyperlinks", {}),
+                    })
+                self.client.insert(collection_name=self.collection, data=data)
+                return
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Batch insert attempt {attempt + 1}/{max_retries + 1} failed: {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Batch insert failed after {max_retries + 1} attempts: {e}")
+        raise last_exception
 
     def query_collection(self, insurance_type: InsuranceType, query: str, maximal_docs: int = 2):
         vectors = self.embeder.encode_queries([query])

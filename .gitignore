@@ -223,3 +223,4 @@ dataset/dataset-output/
 dataset/dataset-parse-1.zip
 dataset/dataset-raw.zip
 db/harel.db
+db/rag_checkpoint.json
