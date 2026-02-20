@@ -120,24 +120,11 @@ class PoliciesDataProcessor:
         if len(sentences) <= 2:
             return chunks
         
-        # Create overlapping chunks: 1-2, 2-3, 3-4, etc.
-        for i in range(len(sentences) - 1):
-            chunk_text = ' '.join(sentences[i:i+2])
-            chunk_type = f"chunk_{i+1}-{i+2}"
-            chunks.append((chunk_text, chunk_type))
-        
-        # Also create 3-sentence chunks if we have enough sentences
+        # Create overlapping 3-sentence chunks
         if len(sentences) >= 3:
             for i in range(len(sentences) - 2):
                 chunk_text = ' '.join(sentences[i:i+3])
                 chunk_type = f"chunk_{i+1}-{i+3}"
-                chunks.append((chunk_text, chunk_type))
-        
-        # Also create 4-sentence chunks if we have enough sentences
-        if len(sentences) >= 4:
-            for i in range(len(sentences) - 3):
-                chunk_text = ' '.join(sentences[i:i+4])
-                chunk_type = f"chunk_{i+1}-{i+4}"
                 chunks.append((chunk_text, chunk_type))
         
         return chunks

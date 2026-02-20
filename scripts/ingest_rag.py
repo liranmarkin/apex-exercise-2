@@ -8,7 +8,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../src"))
 
-from constants import InsuranceType
+from constants import InsuranceType, SourceType
 from rag.rag import RAG
 
 DUMPS_DIR = os.path.join(os.path.dirname(__file__), "../dataset/dataset-output/rag_dumps")
@@ -70,6 +70,7 @@ def pdf_generator(data: dict):
             "full_doc": _truncate(full_doc, MAX_FULL_DOC_LEN),
             "url": seg.get("url", ""),
             "page_index": page,
+            "source_type": SourceType.PDF,
         }
 
 
@@ -90,10 +91,11 @@ def faq_generator(data: dict):
             "full_doc": _truncate(chunk, MAX_FULL_DOC_LEN),
             "url": entry.get("url", ""),
             "hyperlinks": _parse_hyperlinks(entry.get("hyperlinks", {})),
+            "source_type": SourceType.FAQ,
         }
 
 
-def segment_generator(data: dict):
+def segment_generator(data: dict, source_type: SourceType = SourceType.POLICY):
     """Generator for policies and blogs dumps (same format)."""
     for seg in data["segments"]:
         topic = seg.get("topic", "").lower()
@@ -112,14 +114,15 @@ def segment_generator(data: dict):
             "full_doc": _truncate(full_doc, MAX_FULL_DOC_LEN),
             "url": seg.get("url", ""),
             "hyperlinks": _parse_hyperlinks(seg.get("hyperlinks", {})),
+            "source_type": source_type,
         }
 
 
 DUMP_CONFIG = [
-    ("pdf_dump.json", pdf_generator),
-    ("faq_dump.json", faq_generator),
-    ("policies_dump.json", segment_generator),
-    ("blogs_dump.json", segment_generator),
+    ("pdf_dump.json", lambda data: pdf_generator(data)),
+    ("faq_dump.json", lambda data: faq_generator(data)),
+    ("policies_dump.json", lambda data: segment_generator(data, SourceType.POLICY)),
+    ("blogs_dump.json", lambda data: segment_generator(data, SourceType.BLOG)),
 ]
 
 

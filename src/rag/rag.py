@@ -66,6 +66,7 @@ class RAG:
         schema.add_field(field_name="url", datatype=DataType.VARCHAR, max_length=1000)
         schema.add_field(field_name="page_index", datatype=DataType.INT8)
         schema.add_field(field_name="hyperlinks", datatype=DataType.JSON)
+        schema.add_field(field_name="source_type", datatype=DataType.INT8)
         return schema
 
     def _reset_collection(self):
@@ -78,7 +79,7 @@ class RAG:
         index_params.add_index(field_name="embeding", metric_type="COSINE")
         self.client.create_index(self.collection, index_params)
 
-    def insert_doc(self, chunk: str, insurance_type: InsuranceType, full_doc: str, url: str, page_index: int = -1, hyperlinks: dict[str, str] = dict()):
+    def insert_doc(self, chunk: str, insurance_type: InsuranceType, full_doc: str, url: str, page_index: int = -1, hyperlinks: dict[str, str] = dict(), source_type=None):
         embeding = self.embeder.encode_documents([chunk])[0]
         data = [{
             "embeding": embeding,
@@ -86,7 +87,8 @@ class RAG:
             "full_doc": full_doc,
             "url": url,
             "page_index": page_index,
-            "hyperlinks": hyperlinks
+            "hyperlinks": hyperlinks,
+            "source_type": source_type.value if hasattr(source_type, 'value') else (source_type or 2),
         }]
         res = self.client.insert(collection_name=self.collection, data=data)
         return res
@@ -126,6 +128,7 @@ class RAG:
                 embeddings = self.embeder.encode_documents(chunks)
                 data = []
                 for item, emb in zip(batch, embeddings):
+                    source_type = item.get("source_type")
                     data.append({
                         "embeding": emb,
                         "insurance_type": item["insurance_type"].value,
@@ -133,6 +136,7 @@ class RAG:
                         "url": item.get("url", ""),
                         "page_index": item.get("page_index", -1),
                         "hyperlinks": item.get("hyperlinks", {}),
+                        "source_type": source_type.value if hasattr(source_type, 'value') else (source_type or 2),
                     })
                 self.client.insert(collection_name=self.collection, data=data)
                 return
@@ -157,6 +161,7 @@ class RAG:
             "url",
             "page_index",
             "hyperlinks",
+            "source_type",
         ]
         res = self.client.search(collection_name=self.collection, data=vectors, filter=filter, output_fields=output_fields, limit=maximal_docs)[0]
         return res

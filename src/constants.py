@@ -33,3 +33,10 @@ class InsuranceType(Enum):
             return cls.DENTAL
         if name == "mortgage":
             return cls.MORTGAGE
+
+
+class SourceType(Enum):
+    FAQ = 1
+    PDF = 2
+    POLICY = 3
+    BLOG = 4

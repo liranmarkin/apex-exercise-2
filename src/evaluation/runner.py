@@ -120,6 +120,9 @@ def generate_rag_answers(
     from rag.rag import RAG
 
     rag = RAG(reset_collection=False)
+    # Warm up Milvus index to avoid cold-start latency on the first real query
+    _warmup_vec = rag.embeder.encode_queries(["warmup"])[0]
+    rag.client.search(collection_name=rag.collection, data=[_warmup_vec], limit=1)
     llm = ChatOpenAI(model=model, temperature=0, max_retries=5)
     total = len(samples)
     results = [None] * total
@@ -141,27 +144,46 @@ def generate_rag_answers(
         insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
         t0 = time.time()
         hits = rag.query_collection(
-            insurance_type, search_query, maximal_docs=7
+            insurance_type, search_query, maximal_docs=15
         )
         retrieval_time = time.time() - t0
 
-        # Deduplicate by (url, page_index) — multiple chunks from the same
-        # page can match, but we only need the full_doc once.
-        seen = set()
-        retrieved_docs = []
-        sources = []
+        # Deduplicate by (url, page_index), keeping the best distance per key
+        seen = {}
         for hit in (hits or []):
             url = hit["entity"].get("url", "")
             page = hit["entity"].get("page_index", -1)
             key = (url, page)
-            if key in seen:
+            dist = hit.get("distance", 0)
+            if key not in seen or dist > seen[key].get("distance", 0):
+                seen[key] = {
+                    "entity": hit["entity"],
+                    "distance": dist,
+                }
+
+        # Score, filter, and rank — take top 5
+        MIN_DISTANCE = 0.45  # reject low-similarity results
+        FAQ_BOOST = 1.15
+        candidates = []
+        for key, hit in seen.items():
+            dist = hit["distance"]
+            if dist < MIN_DISTANCE:
                 continue
-            seen.add(key)
+            source_type = hit["entity"].get("source_type", 2)
+            score = dist * FAQ_BOOST if source_type == 1 else dist  # FAQ boost
+            candidates.append((score, key, hit))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        top = candidates[:5]
+
+        retrieved_docs = []
+        sources = []
+        for score, key, hit in top:
             retrieved_docs.append(hit["entity"]["full_doc"])
             sources.append({
-                "url": url,
-                "page_index": page,
-                "distance": hit.get("distance", 0),
+                "url": hit["entity"].get("url", ""),
+                "page_index": hit["entity"].get("page_index", -1),
+                "distance": hit["distance"],
+                "source_type": hit["entity"].get("source_type", 2),
             })
 
         if retrieved_docs:

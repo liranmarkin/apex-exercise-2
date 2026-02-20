@@ -229,22 +229,11 @@ class PDFDataProcessor:
         if len(sentences) <= 2:
             return chunks
         
-        # Create overlapping chunks
-        for i in range(len(sentences) - 1):
-            chunk_text = ' '.join(sentences[i:i+2])
-            chunk_type = f"chunk_{i+1}-{i+2}"
-            chunks.append((chunk_text, chunk_type))
-        
+        # Create overlapping 3-sentence chunks
         if len(sentences) >= 3:
             for i in range(len(sentences) - 2):
                 chunk_text = ' '.join(sentences[i:i+3])
                 chunk_type = f"chunk_{i+1}-{i+3}"
-                chunks.append((chunk_text, chunk_type))
-        
-        if len(sentences) >= 4:
-            for i in range(len(sentences) - 3):
-                chunk_text = ' '.join(sentences[i:i+4])
-                chunk_type = f"chunk_{i+1}-{i+4}"
                 chunks.append((chunk_text, chunk_type))
         
         return chunks

@@ -5,7 +5,7 @@ import os
 import time
 from datetime import datetime, timezone
 
-from constants import DB_PATH, InsuranceType
+from constants import DB_PATH, InsuranceType, SourceType
 from rag.rag import RAG
 from rag.prepare_faq_for_rag import FAQDataExtractor
 from rag.prepare_pdf_for_rag import PDFDataProcessor
@@ -24,6 +24,7 @@ def faq_wrapper(json_path: str):
         kwargs["full_doc"] = entry["formatted_qa"]
         kwargs["url"] = entry["url"]
         kwargs["hyperlinks"] = entry["hyperlinks"]
+        kwargs["source_type"] = SourceType.FAQ
         yield kwargs
 
 
@@ -37,10 +38,11 @@ def pdf_wrapper(json_path: str):
         kwargs["full_doc"] = entry.entire_page_data
         kwargs["url"] = entry.url
         kwargs["page_index"] = entry.page_number
+        kwargs["source_type"] = SourceType.PDF
         yield kwargs
 
 
-def html_wrapper(json_path: str):
+def html_wrapper(json_path: str, source_type: SourceType = SourceType.POLICY):
     extractor = PoliciesDataProcessor(json_path)
     generator = extractor.iter_all_segments()
     for entry in generator:
@@ -50,14 +52,15 @@ def html_wrapper(json_path: str):
         kwargs["full_doc"] = entry.full_page_text
         kwargs["url"] = entry.url
         kwargs["hyperlinks"] = entry.hyperlinks
+        kwargs["source_type"] = source_type
         yield kwargs
 
 
 ALL_SOURCES = {
     "faq": ("FAQ", lambda: faq_wrapper("dataset/dataset-output/dataset/topics-faq.json")),
     "pdf": ("PDF", lambda: pdf_wrapper("dataset/dataset-output/dataset/topics-pdf-docling.json")),
-    "blogs": ("Blogs", lambda: html_wrapper("dataset/dataset-output/dataset/topic-information-blogs-manual-html-parse.json")),
-    "policies": ("Policies", lambda: html_wrapper("dataset/dataset-output/dataset/topics-policies-manual-html-parse.json")),
+    "blogs": ("Blogs", lambda: html_wrapper("dataset/dataset-output/dataset/topic-information-blogs-manual-html-parse.json", SourceType.BLOG)),
+    "policies": ("Policies", lambda: html_wrapper("dataset/dataset-output/dataset/topics-policies-manual-html-parse.json", SourceType.POLICY)),
 }
 
 
