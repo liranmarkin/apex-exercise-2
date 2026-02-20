@@ -134,11 +134,17 @@ def generate_rag_answers(
         sample = samples[idx]
         start = time.time()
 
+        t0 = time.time()
         search_query = _rewrite_query(sample["question"])
+        rewrite_time = time.time() - t0
+
         insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
+        t0 = time.time()
         hits = rag.query_collection(
             insurance_type, search_query, maximal_docs=7
         )
+        retrieval_time = time.time() - t0
+
         # Deduplicate by (url, page_index) — multiple chunks from the same
         # page can match, but we only need the full_doc once.
         seen = set()
@@ -178,16 +184,25 @@ def generate_rag_answers(
         else:
             prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
 
+        t0 = time.time()
         response = llm.invoke(prompt)
+        llm_time = time.time() - t0
+
         latency = time.time() - start
-        return idx, response.content, retrieved_docs, sources, latency, search_query
+        timings = {
+            "rewrite_s": round(rewrite_time, 3),
+            "retrieval_s": round(retrieval_time, 3),
+            "llm_answer_s": round(llm_time, 3),
+            "total_s": round(latency, 3),
+        }
+        return idx, response.content, retrieved_docs, sources, latency, search_query, timings
 
     done = 0
     with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
         futures = {pool.submit(_process, i): i for i in range(total)}
         for future in as_completed(futures):
-            idx, answer, ctx, srcs, latency, sq = future.result()
-            results[idx] = (answer, ctx, srcs, latency, sq)
+            idx, answer, ctx, srcs, latency, sq, timings = future.result()
+            results[idx] = (answer, ctx, srcs, latency, sq, timings)
             done += 1
             if done % max(1, total // 10) == 0 or done == total:
                 _print_progress(done, total, pipeline_start)
@@ -197,8 +212,9 @@ def generate_rag_answers(
     retrieved_sources = [r[2] for r in results]
     latencies = [r[3] for r in results]
     search_queries = [r[4] for r in results]
+    all_timings = [r[5] for r in results]
     print(f"  Completed {total} questions in {time.time() - pipeline_start:.1f}s")
-    return answers, contexts, latencies, retrieved_sources, search_queries
+    return answers, contexts, latencies, retrieved_sources, search_queries, all_timings
 
 
 # ------------------------------------------------------------------
@@ -242,13 +258,14 @@ def run_evaluation(
     # Generate answers
     retrieved_sources = None
     search_queries = None
+    all_timings = None
     print(f"\n--- {mode} ({model}) ---")
     if mode == "baseline":
         answers, contexts, latencies = generate_baseline_answers(
             samples, model=model, max_concurrency=max_concurrency,
         )
     else:
-        answers, contexts, latencies, retrieved_sources, search_queries = generate_rag_answers(
+        answers, contexts, latencies, retrieved_sources, search_queries, all_timings = generate_rag_answers(
             samples, model=model, max_concurrency=max_concurrency,
         )
 
@@ -286,6 +303,8 @@ def run_evaluation(
             entry["retrieved_sources"] = retrieved_sources[i]
         if search_queries:
             entry["search_query"] = search_queries[i]
+        if all_timings:
+            entry["timings"] = all_timings[i]
         per_question.append(entry)
 
     # Save
@@ -297,6 +316,11 @@ def run_evaluation(
     print(f"[{label}] Citation accuracy: {citation_score:.4f}")
     print(f"[{label}] Efficiency score:  {efficiency_score:.4f}")
     print(f"[{label}] Competition score: {competition_score:.4f}")
+    if all_timings:
+        avg_rewrite = sum(t["rewrite_s"] for t in all_timings) / len(all_timings)
+        avg_retrieval = sum(t["retrieval_s"] for t in all_timings) / len(all_timings)
+        avg_llm = sum(t["llm_answer_s"] for t in all_timings) / len(all_timings)
+        print(f"[{label}] Avg timings — rewrite: {avg_rewrite:.2f}s, retrieval: {avg_retrieval:.2f}s, llm: {avg_llm:.2f}s")
     print(f"[{label}] Results saved to {output_path}")
 
     return result
