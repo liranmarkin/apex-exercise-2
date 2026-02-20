@@ -2,11 +2,39 @@ import logging
 import time
 from typing import Generator
 
-from pymilvus import MilvusClient, DataType, model
+from openai import OpenAI
+from pymilvus import MilvusClient, DataType
 
 from constants import DB_PATH, COLLECTION_NAME, InsuranceType
 
 logger = logging.getLogger(__name__)
+
+OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
+OPENAI_EMBEDDING_DIM = 1536
+OPENAI_BATCH_LIMIT = 2048
+
+
+class OpenAIEmbedder:
+    """OpenAI-based embedder with Hebrew support."""
+
+    def __init__(self, model_name: str = OPENAI_EMBEDDING_MODEL):
+        self.model_name = model_name
+        self.dim = OPENAI_EMBEDDING_DIM
+        self._client = OpenAI()
+
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        results = []
+        for i in range(0, len(texts), OPENAI_BATCH_LIMIT):
+            batch = texts[i : i + OPENAI_BATCH_LIMIT]
+            response = self._client.embeddings.create(input=batch, model=self.model_name)
+            results.extend([item.embedding for item in response.data])
+        return results
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts)
+
+    def encode_queries(self, texts: list[str]) -> list[list[float]]:
+        return self._embed(texts)
 
 
 class RAG:
@@ -15,7 +43,7 @@ class RAG:
         self.collection = COLLECTION_NAME
         self.client = self._get_db_client(DB_PATH)
         self.schema = self._get_schema()
-        
+
         if reset_collection:
             self._reset_collection()
 
@@ -23,7 +51,7 @@ class RAG:
 
     @staticmethod
     def _get_embeder():
-        return model.DefaultEmbeddingFunction()
+        return OpenAIEmbedder()
 
     def _get_db_client(self, db_path: str):
         client = MilvusClient(db_path)

@@ -19,7 +19,7 @@ def faq_wrapper(json_path: str):
     wrapper = generator.extract_faq_entries()
     for entry in wrapper:
         kwargs = dict()
-        kwargs["chunk"] = entry["question"]
+        kwargs["chunk"] = entry["formatted_qa"]
         kwargs["insurance_type"] = InsuranceType.from_string(entry["topic"])
         kwargs["full_doc"] = entry["formatted_qa"]
         kwargs["url"] = entry["url"]

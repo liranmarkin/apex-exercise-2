@@ -24,9 +24,13 @@ DOMAIN_TO_INSURANCE_TYPE = {
 }
 
 SYSTEM_PROMPT = (
-    "אתה נציג שירות לקוחות של הראל ביטוח. "
-    "ענה על השאלה בצורה מדויקת ותמציתית בעברית. "
-    "אם אתה מצטט מסמך, ציין את שם הקובץ ומספר העמוד."
+    "אתה נציג שירות לקוחות מומחה של הראל ביטוח. "
+    "תפקידך לענות על שאלות לקוחות בצורה מדויקת, מקצועית ומועילה בעברית.\n\n"
+    "הנחיות:\n"
+    "1. ענה על בסיס המידע שסופק לך. אם המידע מכיל תשובה חלקית, ספק את מה שאתה יכול.\n"
+    "2. ציין את המקור: כתובת URL ומספר עמוד אם זמין.\n"
+    "3. אם המידע שסופק לא מכיל תשובה ישירה, נסה להסיק תשובה מהמידע הזמין.\n"
+    "4. היה תמציתי אך מלא - אל תשמיט פרטים חשובים."
 )
 
 QUERY_REWRITE_PROMPT = (
@@ -37,7 +41,15 @@ QUERY_REWRITE_PROMPT = (
     "- החזר רק את שאילתת החיפוש, ללא הסברים\n"
     "- השתמש במילות מפתח רלוונטיות מתחום הביטוח\n"
     "- הסר מילות שאלה מיותרות והשאר את הליבה\n"
-    "- אם השאלה כוללת מונחים טכניים, שמור עליהם\n\n"
+    "- אם השאלה כוללת מונחים טכניים, שמור עליהם\n"
+    "- כלול מונחים נרדפים רלוונטיים\n\n"
+    "דוגמאות:\n"
+    "שאלה: מתי דירה נחשבת לא תפוסה לפי פוליסת ביטוח דירה?\n"
+    "שאילתת חיפוש: דירה לא תפוסה פנויה תנאי פוליסה ימים רצופים\n\n"
+    "שאלה: האם ביטוח הנסיעות מכסה ספורט אתגרי?\n"
+    "שאילתת חיפוש: ביטוח נסיעות ספורט אתגרי כיסוי חריגים פעילות\n\n"
+    "שאלה: מה מספר הטלפון של מוקד התביעות של הראל?\n"
+    "שאילתת חיפוש: מוקד תביעות הראל טלפון מספר פנייה\n\n"
     "שאלת הלקוח: {question}\n\n"
     "שאילתת חיפוש:"
 )
@@ -63,7 +75,7 @@ def generate_baseline_answers(
     """Send each question directly to the LLM (no retrieval)."""
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=model, temperature=0)
+    llm = ChatOpenAI(model=model, temperature=0, max_retries=5)
     total = len(samples)
     results = [None] * total
     pipeline_start = time.time()
@@ -108,7 +120,7 @@ def generate_rag_answers(
     from rag.rag import RAG
 
     rag = RAG(reset_collection=False)
-    llm = ChatOpenAI(model=model, temperature=0)
+    llm = ChatOpenAI(model=model, temperature=0, max_retries=5)
     total = len(samples)
     results = [None] * total
     pipeline_start = time.time()
@@ -125,7 +137,7 @@ def generate_rag_answers(
         search_query = _rewrite_query(sample["question"])
         insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
         hits = rag.query_collection(
-            insurance_type, search_query, maximal_docs=5
+            insurance_type, search_query, maximal_docs=7
         )
         # Deduplicate by (url, page_index) — multiple chunks from the same
         # page can match, but we only need the full_doc once.
@@ -147,11 +159,21 @@ def generate_rag_answers(
             })
 
         if retrieved_docs:
-            context_str = "\n\n".join(retrieved_docs)
+            context_parts = []
+            for doc, src in zip(retrieved_docs, sources):
+                url = src.get("url", "")
+                page = src.get("page_index", -1)
+                source_label = f"[מקור: {url}"
+                if page > 0:
+                    source_label += f", עמוד {page}"
+                source_label += "]"
+                context_parts.append(f"{source_label}\n{doc}")
+            context_str = "\n\n---\n\n".join(context_parts)
             prompt = (
                 f"{SYSTEM_PROMPT}\n\n"
-                f"ענה בהתבסס אך ורק על המידע הבא:\n{context_str}\n\n"
-                f"שאלה: {sample['question']}"
+                f"להלן מידע ממסמכי הראל ביטוח הרלוונטיים לשאלה:\n\n{context_str}\n\n"
+                f"שאלת הלקוח: {sample['question']}\n\n"
+                f"ענה על בסיס המידע לעיל. ציין את המקור (URL ועמוד) בסוף התשובה."
             )
         else:
             prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
