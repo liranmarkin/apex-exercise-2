@@ -58,7 +58,7 @@ This downloads all dataset files (~1.4 GB) into `dataset/` and `db/`. Files that
 Evaluate baseline (LLM-only) or RAG performance against reference questions:
 
 ```bash
-uv run python scripts/evaluate_baseline.py --mode baseline --model gpt-4o
+uv run python scripts/evaluate_baseline.py --mode baseline --model openai/gpt-oss-120b
 uv run python scripts/evaluate_baseline.py --mode rag
 uv run python scripts/evaluate_baseline.py --mode both
 uv run python scripts/evaluate_baseline.py --questions reference-questions-extended.json
@@ -66,7 +66,7 @@ uv run python scripts/evaluate_baseline.py --questions reference-questions-exten
 
 Options:
 - `--mode` - `baseline`, `rag`, or `both`
-- `--model` - LLM model to use (default: `gpt-4o`)
+- `--model` - LLM model to use (default: `openai/gpt-oss-120b`)
 - `--output-dir` - Results directory (default: `evaluation_results/`)
 - `--questions` - Path to reference questions JSON
 - `--concurrency` - Parallel LLM calls (default: 5)

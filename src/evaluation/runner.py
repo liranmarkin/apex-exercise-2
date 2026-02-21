@@ -5,12 +5,26 @@ Keeps all orchestration logic in one place so scripts stay thin.
 """
 
 import time
+import sys
+import logging
+import os
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from constants import InsuranceType
 
 from .dataset import build_ragas_dataset, load_reference_questions
 from .ragas_evaluator import RAGASEvaluator
+
+# Import agent classes
+agent_path = str(Path(__file__).parent.parent / "agent")
+if agent_path not in sys.path:
+    sys.path.insert(0, agent_path)
+
+from harel_agent import HarelAgent
+from response_agent import ResponseAgent
+
+logger = logging.getLogger(__name__)
 
 DOMAIN_TO_INSURANCE_TYPE = {
     "travel": InsuranceType.TRAVEL,
@@ -22,37 +36,6 @@ DOMAIN_TO_INSURANCE_TYPE = {
     "dental": InsuranceType.DENTAL,
     "mortgage": InsuranceType.MORTGAGE,
 }
-
-SYSTEM_PROMPT = (
-    "אתה נציג שירות לקוחות מומחה של הראל ביטוח. "
-    "תפקידך לענות על שאלות לקוחות בצורה מדויקת, מקצועית ומועילה בעברית.\n\n"
-    "הנחיות:\n"
-    "1. ענה על בסיס המידע שסופק לך. אם המידע מכיל תשובה חלקית, ספק את מה שאתה יכול.\n"
-    "2. ציין את המקור: כתובת URL ומספר עמוד אם זמין.\n"
-    "3. אם המידע שסופק לא מכיל תשובה ישירה, נסה להסיק תשובה מהמידע הזמין.\n"
-    "4. היה תמציתי אך מלא - אל תשמיט פרטים חשובים."
-)
-
-QUERY_REWRITE_PROMPT = (
-    "אתה מערכת חיפוש עבור חברת הראל ביטוח. "
-    "קיבלת שאלה מלקוח ואתה צריך לייצר שאילתת חיפוש אופטימלית "
-    "לחיפוש במאגר מסמכי ביטוח.\n\n"
-    "כללים:\n"
-    "- החזר רק את שאילתת החיפוש, ללא הסברים\n"
-    "- השתמש במילות מפתח רלוונטיות מתחום הביטוח\n"
-    "- הסר מילות שאלה מיותרות והשאר את הליבה\n"
-    "- אם השאלה כוללת מונחים טכניים, שמור עליהם\n"
-    "- כלול מונחים נרדפים רלוונטיים\n\n"
-    "דוגמאות:\n"
-    "שאלה: מתי דירה נחשבת לא תפוסה לפי פוליסת ביטוח דירה?\n"
-    "שאילתת חיפוש: דירה לא תפוסה פנויה תנאי פוליסה ימים רצופים\n\n"
-    "שאלה: האם ביטוח הנסיעות מכסה ספורט אתגרי?\n"
-    "שאילתת חיפוש: ביטוח נסיעות ספורט אתגרי כיסוי חריגים פעילות\n\n"
-    "שאלה: מה מספר הטלפון של מוקד התביעות של הראל?\n"
-    "שאילתת חיפוש: מוקד תביעות הראל טלפון מספר פנייה\n\n"
-    "שאלת הלקוח: {question}\n\n"
-    "שאילתת חיפוש:"
-)
 
 
 # ------------------------------------------------------------------
@@ -69,13 +52,15 @@ def _print_progress(done: int, total: int, start_time: float):
 
 def generate_baseline_answers(
     samples: list[dict],
-    model: str = "gpt-4o",
+    model: str = "openai/gpt-oss-120b",
     max_concurrency: int = 1,
 ) -> tuple[list[str], list[list[str]], list[float]]:
-    """Send each question directly to the LLM (no retrieval)."""
-    from langchain_openai import ChatOpenAI
-
-    llm = ChatOpenAI(model=model, temperature=0, max_retries=5)
+    """
+    Generate baseline answers using ResponseAgent with null context.
+    
+    No insurance type identification or query rewriting - just raw LLM generation.
+    """
+    response_agent = ResponseAgent(model_name=model)
     total = len(samples)
     results = [None] * total
     pipeline_start = time.time()
@@ -83,10 +68,14 @@ def generate_baseline_answers(
     def _process(idx: int):
         sample = samples[idx]
         start = time.time()
-        prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
-        response = llm.invoke(prompt)
+        # Use ResponseAgent with empty RAG results (null context)
+        answer = response_agent.generate(
+            user_input=sample['question'],
+            insurance_type="UNKNOWN",  # Null type
+            rag_results=[]  # No context
+        )
         latency = time.time() - start
-        return idx, response.content, [], latency
+        return idx, answer, [], latency
 
     done = 0
     with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
@@ -107,117 +96,54 @@ def generate_baseline_answers(
 
 def generate_rag_answers(
     samples: list[dict],
-    model: str = "gpt-4o",
+    model: str = "openai/gpt-oss-120b",
     max_concurrency: int = 1,
 ) -> tuple[list[str], list[list[str]], list[float], list[list[dict]]]:
-    """Retrieve contexts via RAG.query_collection, then generate an answer.
-
-    Returns (answers, contexts, latencies, retrieved_sources) where
-    retrieved_sources is a list of [{url, page_index, distance}, ...] per question.
     """
-    from langchain_openai import ChatOpenAI
-
-    from rag.rag import RAG
-
-    rag = RAG(reset_collection=False)
-    # Warm up Milvus index to avoid cold-start latency on the first real query
-    _warmup_vec = rag.embeder.encode_queries(["warmup"])[0]
-    rag.client.search(collection_name=rag.collection, data=[_warmup_vec], limit=1)
-    llm = ChatOpenAI(model=model, temperature=0, max_retries=5)
+    Generate answers using HarelAgent as a blackbox.
+    
+    HarelAgent handles:
+    - Insurance type identification
+    - Query rewriting
+    - RAG retrieval
+    - Answer generation
+    
+    Returns (answers, contexts, latencies, retrieved_sources, search_queries, all_timings) where:
+    - answers: list of final answers
+    - contexts: list of retrieved documents (empty for HarelAgent, as it handles internally)
+    - latencies: list of total latencies per question
+    - retrieved_sources: list of source metadata per question
+    - search_queries: list of rewritten queries per question
+    - all_timings: list of timing breakdowns per question
+    """
+    harel_agent = HarelAgent()
     total = len(samples)
     results = [None] * total
     pipeline_start = time.time()
 
-    def _rewrite_query(question: str) -> str:
-        rewrite_prompt = QUERY_REWRITE_PROMPT.format(question=question)
-        response = llm.invoke(rewrite_prompt)
-        return response.content.strip()
-
     def _process(idx: int):
         sample = samples[idx]
         start = time.time()
-
-        t0 = time.time()
-        search_query = _rewrite_query(sample["question"])
-        rewrite_time = time.time() - t0
-
-        insurance_type = DOMAIN_TO_INSURANCE_TYPE.get(sample["domain"])
-        t0 = time.time()
-        hits = rag.query_collection(
-            insurance_type, search_query, maximal_docs=15
-        )
-        retrieval_time = time.time() - t0
-
-        # Deduplicate by (url, page_index), keeping the best distance per key
-        seen = {}
-        for hit in (hits or []):
-            url = hit["entity"].get("url", "")
-            page = hit["entity"].get("page_index", -1)
-            key = (url, page)
-            dist = hit.get("distance", 0)
-            if key not in seen or dist > seen[key].get("distance", 0):
-                seen[key] = {
-                    "entity": hit["entity"],
-                    "distance": dist,
-                }
-
-        # Score, filter, and rank — take top 5
-        MIN_DISTANCE = 0.45  # reject low-similarity results
-        FAQ_BOOST = 1.15
-        candidates = []
-        for key, hit in seen.items():
-            dist = hit["distance"]
-            if dist < MIN_DISTANCE:
-                continue
-            source_type = hit["entity"].get("source_type", 2)
-            score = dist * FAQ_BOOST if source_type == 1 else dist  # FAQ boost
-            candidates.append((score, key, hit))
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        top = candidates[:5]
-
-        retrieved_docs = []
-        sources = []
-        for score, key, hit in top:
-            retrieved_docs.append(hit["entity"]["full_doc"])
-            sources.append({
-                "url": hit["entity"].get("url", ""),
-                "page_index": hit["entity"].get("page_index", -1),
-                "distance": hit["distance"],
-                "source_type": hit["entity"].get("source_type", 2),
-            })
-
-        if retrieved_docs:
-            context_parts = []
-            for doc, src in zip(retrieved_docs, sources):
-                url = src.get("url", "")
-                page = src.get("page_index", -1)
-                source_label = f"[מקור: {url}"
-                if page > 0:
-                    source_label += f", עמוד {page}"
-                source_label += "]"
-                context_parts.append(f"{source_label}\n{doc}")
-            context_str = "\n\n---\n\n".join(context_parts)
-            prompt = (
-                f"{SYSTEM_PROMPT}\n\n"
-                f"להלן מידע ממסמכי הראל ביטוח הרלוונטיים לשאלה:\n\n{context_str}\n\n"
-                f"שאלת הלקוח: {sample['question']}\n\n"
-                f"ענה על בסיס המידע לעיל. ציין את המקור (URL ועמוד) בסוף התשובה."
-            )
-        else:
-            prompt = f"{SYSTEM_PROMPT}\n\nשאלה: {sample['question']}"
-
-        t0 = time.time()
-        response = llm.invoke(prompt)
-        llm_time = time.time() - t0
-
+        
+        # Call HarelAgent with generate_stats=True to get detailed stats
+        answer, stats = harel_agent.chat(sample['question'], generate_stats=True)
+        
         latency = time.time() - start
+        
+        # Extract intermediate results from stats
+        retrieved_docs = stats.get("intermediate", {}).get("retrieved_docs", [])
+        rewritten_query = stats.get("intermediate", {}).get("rewritten_query", "")
+        sources = stats.get("intermediate", {}).get("retrieved_sources", [])
+        
+        # Build timings dict matching evaluation format
         timings = {
-            "rewrite_s": round(rewrite_time, 3),
-            "retrieval_s": round(retrieval_time, 3),
-            "llm_answer_s": round(llm_time, 3),
-            "total_s": round(latency, 3),
+            "rewrite_s": stats.get("rewrite_s", 0),
+            "retrieval_s": stats.get("retrieval_s", 0),
+            "llm_answer_s": stats.get("llm_answer_s", 0),
+            "total_s": stats.get("total_s", 0),
         }
-        return idx, response.content, retrieved_docs, sources, latency, search_query, timings
+        
+        return idx, answer, retrieved_docs, sources, latency, rewritten_query, timings
 
     done = 0
     with ThreadPoolExecutor(max_workers=max_concurrency) as pool:
@@ -246,7 +172,7 @@ def generate_rag_answers(
 
 def run_evaluation(
     mode: str,
-    model: str = "gpt-4o",
+    model: str = "openai/gpt-oss-120b",
     output_dir: str = "evaluation_results",
     questions_path: str | None = None,
     max_concurrency: int = 5,
@@ -296,6 +222,7 @@ def run_evaluation(
 
     # Evaluate
     evaluator = RAGASEvaluator(max_workers=max_concurrency)
+    print(contexts)
     has_contexts = any(len(c) > 0 for c in contexts)
     if has_contexts:
         metrics = evaluator.evaluate_rag(dataset)
@@ -339,10 +266,11 @@ def run_evaluation(
     print(f"[{label}] Efficiency score:  {efficiency_score:.4f}")
     print(f"[{label}] Competition score: {competition_score:.4f}")
     if all_timings:
-        avg_rewrite = sum(t["rewrite_s"] for t in all_timings) / len(all_timings)
-        avg_retrieval = sum(t["retrieval_s"] for t in all_timings) / len(all_timings)
-        avg_llm = sum(t["llm_answer_s"] for t in all_timings) / len(all_timings)
-        print(f"[{label}] Avg timings — rewrite: {avg_rewrite:.2f}s, retrieval: {avg_retrieval:.2f}s, llm: {avg_llm:.2f}s")
+        avg_identification = sum(t.get("identification_s", 0) for t in all_timings) / len(all_timings)
+        avg_rewrite = sum(t.get("rewrite_s", 0) for t in all_timings) / len(all_timings)
+        avg_retrieval = sum(t.get("retrieval_s", 0) for t in all_timings) / len(all_timings)
+        avg_llm = sum(t.get("llm_answer_s", 0) for t in all_timings) / len(all_timings)
+        print(f"[{label}] Avg timings — identification: {avg_identification:.2f}s, rewrite: {avg_rewrite:.2f}s, retrieval: {avg_retrieval:.2f}s, llm: {avg_llm:.2f}s")
     print(f"[{label}] Results saved to {output_path}")
 
     return result
