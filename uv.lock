@@ -97,6 +97,7 @@ name = "apex-exercise-2"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "datasets" },
     { name = "fastapi" },
     { name = "langchain" },
@@ -117,6 +118,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "fastapi", specifier = ">=0.129.2" },
     { name = "langchain", specifier = ">=1.2.10" },
