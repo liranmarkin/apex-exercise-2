@@ -11,6 +11,7 @@ import sys
 import time
 import logging
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -32,18 +33,14 @@ from constants import InsuranceType
 class HarelAgent:
     """Main orchestrator agent for Harel Insurance customer support chatbot."""
     
+    FAST_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct-fast"
+    MEDIUM_MODEL = "meta-llama/Llama-3.3-70B-Instruct-fast"
+    STRONG_MODEL = "openai/gpt-oss-120b"
+
     def __init__(self):
-        """
-        Initialize the Harel Agent with all subagents using hardcoded model names.
-        
-        The following models are used:
-        - Insurance identification: openai/gpt-oss-20b (fast, suitable for classification)
-        - Query rewriting: openai/gpt-oss-20b (fast, suitable for text transformation)
-        - Answer generation: openai/gpt-oss-120b (powerful, suitable for generation)
-        """
-        self.identification_agent = InsuranceTypeIdentificationAgent(model_name="openai/gpt-oss-20b")
-        self.rewrite_agent = QueryRewriteAgent(model_name="openai/gpt-oss-20b")
-        self.response_agent = ResponseAgent(model_name="openai/gpt-oss-120b")
+        self.identification_agent = InsuranceTypeIdentificationAgent(model_name=self.FAST_MODEL)
+        self.rewrite_agent = QueryRewriteAgent(model_name=self.MEDIUM_MODEL)
+        self.response_agent = ResponseAgent(model_name=self.STRONG_MODEL)
         self.rag = RAG(reset_collection=False)
         # Warm up Milvus index to avoid cold-start latency on the first real query
         _warmup_vec = self.rag.embeder.encode_queries(["warmup"])[0]
@@ -207,20 +204,19 @@ class HarelAgent:
         """
         
         pipeline_start = time.time()
-        
-        # Agent 1: Identify Insurance Type
-        logger.info("Starting insurance type identification...")
+
+        # Agent 1 + Agent 2: Run in parallel (rewrite doesn't need insurance type for good results)
+        logger.info("Starting insurance type identification + query rewrite in parallel...")
         start_time = time.time()
-        insurance_type = self.identification_agent.identify(user_input)
-        agent1_time = time.time() - start_time
-        logger.info(f"Agent 1 completed - Identified Insurance Type: {insurance_type} (Time: {agent1_time:.2f}s)")
-        
-        # Agent 2: Rewrite Query for Retrieval
-        logger.info("Starting query rewrite for retrieval...")
-        start_time = time.time()
-        rewritten_query = self.rewrite_agent.rewrite(user_input, insurance_type)
-        rewrite_time = time.time() - start_time
-        logger.info(f"Agent 2 completed - Rewritten Query: {rewritten_query} (Time: {rewrite_time:.2f}s)")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_id = executor.submit(self.identification_agent.identify, user_input)
+            future_rewrite = executor.submit(self.rewrite_agent.rewrite, user_input, "GENERAL")
+            insurance_type = future_id.result()
+            rewritten_query = future_rewrite.result()
+        parallel_time = time.time() - start_time
+        agent1_time = parallel_time
+        rewrite_time = parallel_time
+        logger.info(f"Agent 1+2 completed in parallel - Type: {insurance_type}, Query: {rewritten_query} (Time: {parallel_time:.2f}s)")
 
         # RAG Retrieval
         logger.info("Starting document retrieval...")

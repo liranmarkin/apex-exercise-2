@@ -60,8 +60,8 @@ class QueryRewriteAgent:
             response = llm_with_retries.invoke(
                 prompt,
                 temperature=0,           # Strictly factual
-                max_tokens=800,          # Safety ceiling
-                timeout=30,              # Don't let users hang forever
+                max_tokens=150,          # Short search query only
+                timeout=10,
             )
 
             text = response.content.strip()

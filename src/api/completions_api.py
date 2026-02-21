@@ -1,10 +1,13 @@
 import time
+import asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 import logging
 import sys
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(name)s: %(message)s')
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
