@@ -28,11 +28,15 @@ from rag.rag import RAG
 from constants import InsuranceType
 
 
+# Shared thread pool to limit total concurrent LLM calls across all requests
+# Prevents Nebius API throttling when multiple requests arrive simultaneously
+_llm_pool = ThreadPoolExecutor(max_workers=6)
+
 # ============== HAREL AGENT ORCHESTRATOR ==============
 
 class HarelAgent:
     """Main orchestrator agent for Harel Insurance customer support chatbot."""
-    
+
     FAST_MODEL = "meta-llama/Meta-Llama-3.1-8B-Instruct-fast"
     MEDIUM_MODEL = "meta-llama/Llama-3.3-70B-Instruct-fast"
     STRONG_MODEL = "openai/gpt-oss-120b"
@@ -208,11 +212,10 @@ class HarelAgent:
         # Agent 1 + Agent 2: Run in parallel (rewrite doesn't need insurance type for good results)
         logger.info("Starting insurance type identification + query rewrite in parallel...")
         start_time = time.time()
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future_id = executor.submit(self.identification_agent.identify, user_input)
-            future_rewrite = executor.submit(self.rewrite_agent.rewrite, user_input, "GENERAL")
-            insurance_type = future_id.result()
-            rewritten_query = future_rewrite.result()
+        future_id = _llm_pool.submit(self.identification_agent.identify, user_input)
+        future_rewrite = _llm_pool.submit(self.rewrite_agent.rewrite, user_input, "GENERAL")
+        insurance_type = future_id.result()
+        rewritten_query = future_rewrite.result()
         parallel_time = time.time() - start_time
         agent1_time = parallel_time
         rewrite_time = parallel_time
