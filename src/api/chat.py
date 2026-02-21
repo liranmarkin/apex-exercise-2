@@ -28,13 +28,16 @@ def query_chatbot(question, base_url, endpoint, model):
             response_data = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as e:
         print(f"Error querying chatbot: {e}")
-        return "Error", time.time() - start_time
+        return "Error", [], time.time() - start_time
 
     latency = time.time() - start_time
 
-    # Extract the answer (OpenAI-like completions format)
-    answer = response_data.get("choices", [{}])[0].get("text", "").strip()
-    return answer, latency
+    # Extract the answer and sources (OpenAI-like completions format)
+    choice = response_data.get("choices", [{}])[0]
+    answer = choice.get("text", "").strip()
+    sources = choice.get("sources", [])
+    
+    return answer, sources, latency
 
 
 def main():
@@ -60,7 +63,7 @@ def main():
 
     for i, q in enumerate(questions, 1):
         print(f"[{i}/{len(questions)}] Querying chatbot...")
-        answer, bot_latency = query_chatbot(q, base_url, args.endpoint, args.model)
+        answer, sources, bot_latency = query_chatbot(q, base_url, args.endpoint, args.model)
 
         conversation = {
             "turns": [
@@ -72,6 +75,7 @@ def main():
                 {
                     "role": "assistant",
                     "content": answer,
+                    "sources": sources,
                     "latency": bot_latency
                 }
             ],

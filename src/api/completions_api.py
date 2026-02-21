@@ -27,10 +27,15 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.1
     stream: Optional[bool] = False
 
+class Source(BaseModel):
+    link: str
+    page: int
+
 class Choice(BaseModel):
     index: int
     text: str
     finish_reason: Optional[str] = None
+    sources: List[Source] = []
 
 class ChatCompletionResponse(BaseModel):
     id: str
@@ -60,7 +65,7 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
     if len(request.messages) == 1:
         user_questions = request.messages[0].content
         try:
-            answer_text = agent.chat(user_questions)
+            answer_text, stats = agent.chat(user_questions, generate_stats=True)
             logger.info(f"Generated answer (len={len(answer_text)} chars)")
         except Exception as e:
             logger.exception("Failed to generate answer via HarelAgent")
@@ -68,6 +73,9 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
     else:
         answer_text = "Error: multiple messages not supported"
     
+    #  Example: [Source(link="https://www.harel-group.co.il/insurance/car/policies/motorcycle", page=4")
+    retrieved_sources = stats["intermediate"]["retrieved_sources"]
+    source_list = [Source(link=src["url"], page=src.get("page_index", -1)) for src in retrieved_sources]
     return ChatCompletionResponse(
         id="question-1",
         object="chat.completion",
@@ -77,6 +85,7 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
             Choice(
                 index=0,
                 text=answer_text,
+                sources=source_list,
                 finish_reason="stop"
             )
         ]
