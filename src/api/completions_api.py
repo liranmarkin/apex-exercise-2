@@ -1,10 +1,13 @@
 import time
+import asyncio
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Literal, Optional
 import logging
 import sys
 from pathlib import Path
+
+logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(name)s: %(message)s')
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -65,7 +68,7 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
     if len(request.messages) == 1:
         user_questions = request.messages[0].content
         try:
-            answer_text, stats = agent.chat(user_questions, generate_stats=True)
+            answer_text, stats = await asyncio.to_thread(agent.chat, user_questions, generate_stats=True)
             logger.info(f"Generated answer (len={len(answer_text)} chars)")
         except Exception as e:
             logger.exception("Failed to generate answer via HarelAgent")
