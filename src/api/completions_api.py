@@ -58,7 +58,7 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
 
     # Build a simple prompt from incoming messages (prefer last user message)
     if len(request.messages) == 1:
-        user_questions = request.messages[0]["user"]
+        user_questions = request.messages[0].content
         try:
             answer_text = agent.chat(user_questions)
             logger.info(f"Generated answer (len={len(answer_text)} chars)")
