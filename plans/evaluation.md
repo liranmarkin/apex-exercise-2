@@ -14,7 +14,7 @@ RAGAS-based evaluation framework to measure RAG pipeline quality against competi
 
 ## Configuration
 
-- **Judge Model:** GPT-4o
+- **Judge Model:** openai/gpt-oss-120b
 - **Output Format:** JSON file (`evaluation_results.json`)
 
 ## Components

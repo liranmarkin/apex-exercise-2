@@ -2,7 +2,7 @@
 Evaluate baseline (LLM-only) and simple RAG against reference questions.
 
 Usage:
-  uv run python scripts/evaluate_baseline.py --mode baseline --model gpt-4o
+  uv run python scripts/evaluate_baseline.py --mode baseline --model openai/gpt-oss-120b
   uv run python scripts/evaluate_baseline.py --mode rag
   uv run python scripts/evaluate_baseline.py --mode both
   uv run python scripts/evaluate_baseline.py --questions reference-questions-extended.json
@@ -11,6 +11,7 @@ Usage:
 import argparse
 import os
 import sys
+import logging
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
@@ -24,7 +25,7 @@ from evaluation.runner import run_evaluation
 def main():
     parser = argparse.ArgumentParser(description="Evaluate baseline and RAG models")
     parser.add_argument("--mode", choices=["baseline", "rag", "both"], default="baseline")
-    parser.add_argument("--model", default="gpt-4o")
+    parser.add_argument("--model", default="openai/gpt-oss-120b")
     parser.add_argument("--output-dir", default="evaluation_results")
     parser.add_argument(
         "--questions",
@@ -43,7 +44,22 @@ def main():
         default=None,
         help="Max number of questions to evaluate",
     )
+    parser.add_argument(
+        "--info",
+        action="store_true",
+        help="Enable INFO level logging",
+    )
     args = parser.parse_args()
+
+    # Configure logging if --info flag is set
+    if args.info:
+        logging.basicConfig(
+            level=logging.INFO,
+            format='[%(name)s] %(levelname)s: %(message)s'
+        )
+
+    if args.info:
+        logging.getLogger().info("INFO logging enabled")
 
     modes = ["baseline", "rag"] if args.mode == "both" else [args.mode]
     for mode in modes:

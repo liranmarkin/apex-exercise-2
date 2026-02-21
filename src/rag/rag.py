@@ -24,7 +24,7 @@ class NebiusEmbedder:
         self.dim = NEBIUS_EMBEDDING_DIM
         self._client = OpenAI(
             base_url=NEBIUS_API_BASE,
-            api_key=os.environ.get("NEBIUS_API_KEY", ""),
+            api_key=os.environ.get("NEBIUS_API_KEY", "v1.CmQKHHN0YXRpY2tleS1lMDB0OGUzZDNzeDhkeXI4bnESIXNlcnZpY2VhY2NvdW50LWUwMHA1emhzNDg1bjRuZmFwMjIMCLqfyMwGEOSgybUCOgwIuaLglwcQgMOX2gJAAloDZTAw.AAAAAAAAAAGemZGoeFt6Ku8C0uYiN4JtJhgL1bUgdwSSkAgACu5DcC-3WAETfyToGkbFnGvIB3B-sVJTZQDH7nqtBV5S2XUB"),
         )
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
