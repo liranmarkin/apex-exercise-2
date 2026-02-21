@@ -102,6 +102,87 @@ class HarelAgent:
         
         return result
     
+    def _parse_sources_from_answer(self, answer: str, rag_results: list) -> list:
+        """
+        Parse sources from the formatted answer text and create a structured list.
+        
+        Extracts the "מקורות:" section from the answer and creates a list of dicts
+        with source URLs, page numbers, and their types.
+        
+        Expected format in answer:
+        מקורות:
+        מקור 1: https://www.harel.co.il/car-insurance/coverage, עמוד 12
+        מקור 2: https://www.harel.co.il/car-insurance/terms, עמוד 25
+        
+        Args:
+            answer: The full answer text (may include sources section)
+            rag_results: The RAG results containing source type information
+            
+        Returns:
+            List of dicts with 'source' (URL), 'page' (page number), and 'type' keys
+        """
+        sources_list = []
+        
+        # Check if answer contains sources section
+        if "מקורות:" not in answer:
+            return sources_list
+        
+        # Split by "מקורות:" to get the sources section
+        parts = answer.split("מקורות:")
+        if len(parts) < 2:
+            return sources_list
+        
+        sources_section = parts[1].strip()
+        
+        # Parse each source line: "מקור X: URL, עמוד PAGE" or "מקור X: URL"
+        for line in sources_section.split("\n"):
+            line = line.strip()
+            if not line or not line.startswith("מקור"):
+                continue
+            
+            # Extract the URL part (after the colon)
+            if ":" not in line:
+                continue
+            
+            # Get the part after "מקור X: "
+            parts = line.split(":", 1)
+            if len(parts) < 2:
+                continue
+            
+            rest = parts[1].strip()
+            
+            # Extract URL and page number
+            page_number = -1  # default value for unknown page
+            url_part = rest
+            
+            if "," in rest:
+                # Format: "URL, עמוד PAGE"
+                url_part = rest.split(",")[0].strip()
+                page_part = rest.split(",", 1)[1].strip()
+                
+                # Try to extract page number from "עמוד PAGE"
+                if "עמוד" in page_part:
+                    page_str = page_part.replace("עמוד", "").strip()
+                    try:
+                        page_number = int(page_str)
+                    except ValueError:
+                        page_number = -1
+            
+            # Map URL to source_type from rag_results
+            source_type = "document"  # default type
+            for result in rag_results:
+                if result.get("entity", {}).get("url", "") == url_part:
+                    source_type = result.get("entity", {}).get("source_type", "document")
+                    break
+            
+            sources_list.append({
+                "source": url_part,
+                "page": page_number,
+                "type": source_type
+            })
+        
+        return sources_list
+    
     def chat(self, user_input: str, generate_stats: bool = False):
         """
         Main chat function that orchestrates the three-agent system.
@@ -111,14 +192,18 @@ class HarelAgent:
         2. Uses Agent 2 to rewrite the query for retrieval
         3. Performs RAG retrieval with the rewritten query
         4. Uses Agent 3 to generate an answer using RAG results
+        5. Parses sources from the answer text
         
         Args:
             user_input: The user's question in Hebrew or English
-            generate_stats: If True, returns (answer, stats_dict); if False, returns just the answer
+            generate_stats: If True, returns (answer, parsed_sources, stats_dict); 
+                          if False, returns (answer, parsed_sources)
             
         Returns:
-            If generate_stats=False: answer string
-            If generate_stats=True: tuple of (answer string, stats_dict with timings and intermediate results)
+            If generate_stats=False: tuple of (answer_string, parsed_sources_list)
+            If generate_stats=True: tuple of (answer_string, parsed_sources_list, stats_dict)
+            
+            parsed_sources_list is a list of dicts with 'source' (URL) and 'type' keys
         """
         
         pipeline_start = time.time()
@@ -160,6 +245,10 @@ class HarelAgent:
         logger.info(f"Agent 3 completed - Generated answer (Time: {agent3_time:.2f}s)")
         logger.debug(f"Agent 3 response: {final_answer}...") if len(final_answer) > 200 else logger.debug(f"Agent 3 response: {final_answer}")
         
+        # Parse sources from the final answer if they exist
+        parsed_sources = self._parse_sources_from_answer(final_answer, rag_results)
+        logger.info(f"Parsed {len(parsed_sources)} sources from the answer")
+        
         # Total time
         total_time = agent1_time + rewrite_time + rag_time + agent3_time
         logger.info(f"Combined Execution Time: {total_time:.2f}s - Agent 1: {agent1_time:.2f}s, Agent 2: {rewrite_time:.2f}s, RAG: {rag_time:.2f}s, Agent 3: {agent3_time:.2f}s")
@@ -190,9 +279,9 @@ class HarelAgent:
             logger.info(f"Stats - Identification: {stats['identification_s']:.3f}s, Rewrite: {stats['rewrite_s']:.3f}s, Retrieval: {stats['retrieval_s']:.3f}s, LLM: {stats['llm_answer_s']:.3f}s, Total: {stats['total_s']:.3f}s")
             logger.info(f"Stats - Insurance Type: {stats['intermediate']['identified_type']}, Docs Retrieved: {stats['intermediate']['retrieved_docs_count']}")
             logger.info(f"Stats - Rewritten Query: {stats['intermediate']['rewritten_query']}")
-            return final_answer, stats
+            return final_answer, parsed_sources, stats
         else:
-            return final_answer
+            return final_answer, parsed_sources
 
 
 
@@ -211,9 +300,10 @@ def main():
     
     # Create and run the Harel Agent
     agent = HarelAgent()
-    response = agent.chat(sample_query)
+    answer, parsed_sources = agent.chat(sample_query)
     
-    logger.info(f"Chatbot Response: {response}")
+    logger.info(f"Chatbot Response: {answer}")
+    logger.info(f"Parsed Sources: {parsed_sources}")
 
 
 if __name__ == "__main__":

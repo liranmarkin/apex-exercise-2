@@ -126,14 +126,16 @@ def generate_rag_answers(
         start = time.time()
         
         # Call HarelAgent with generate_stats=True to get detailed stats
-        answer, stats = harel_agent.chat(sample['question'], generate_stats=True)
+        # New signature: returns (answer_with_sources, sources_list, stats)
+        answer, sources_list, stats = harel_agent.chat(sample['question'], generate_stats=True)
         
         latency = time.time() - start
         
         # Extract intermediate results from stats
         retrieved_docs = stats.get("intermediate", {}).get("retrieved_docs", [])
         rewritten_query = stats.get("intermediate", {}).get("rewritten_query", "")
-        sources = stats.get("intermediate", {}).get("retrieved_sources", [])
+        # sources_list now comes from the return value, not from stats
+        sources = sources_list if sources_list else []
         
         # Build timings dict matching evaluation format
         timings = {

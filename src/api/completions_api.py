@@ -62,20 +62,28 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
     logger.info(f"Processing chat completion request: messages={len(request.messages)}")
 
     # Build a simple prompt from incoming messages (prefer last user message)
+    answer_text = "Error: failed to generate answer at this time."
+    source_list = []
+    
     if len(request.messages) == 1:
         user_questions = request.messages[0].content
         try:
-            answer_text, stats = agent.chat(user_questions, generate_stats=True)
-            logger.info(f"Generated answer (len={len(answer_text)} chars)")
+            # chat() now returns (answer, parsed_sources) where:
+            # parsed_sources is a list of dicts with 'source', 'page', and 'type' keys
+            answer_text, parsed_sources = agent.chat(user_questions)
+            logger.info(f"Generated answer (len={len(answer_text)} chars), sources: {len(parsed_sources)}")
+            
+            # Build source_list from parsed_sources
+            source_list = [
+                Source(link=src["source"], page=src.get("page", -1)) 
+                for src in parsed_sources
+            ]
         except Exception as e:
             logger.exception("Failed to generate answer via HarelAgent")
             answer_text = "Error: failed to generate answer at this time."
     else:
         answer_text = "Error: multiple messages not supported"
     
-    #  Example: [Source(link="https://www.harel-group.co.il/insurance/car/policies/motorcycle", page=4")
-    retrieved_sources = stats["intermediate"]["retrieved_sources"]
-    source_list = [Source(link=src["url"], page=src.get("page_index", -1)) for src in retrieved_sources]
     return ChatCompletionResponse(
         id="question-1",
         object="chat.completion",
