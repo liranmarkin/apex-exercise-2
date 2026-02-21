@@ -44,13 +44,10 @@ class HarelAgent:
         self.identification_agent = InsuranceTypeIdentificationAgent(model_name="openai/gpt-oss-20b")
         self.rewrite_agent = QueryRewriteAgent(model_name="openai/gpt-oss-20b")
         self.response_agent = ResponseAgent(model_name="openai/gpt-oss-120b")
-        self.rag = MockRAG()    
-        
-        # TODO: cahnge to real RAG implementation
-        # self.rag = RAG(reset_collection=False)
-        # # Warm up Milvus index to avoid cold-start latency on the first real query
-        # _warmup_vec = rag.embeder.encode_queries(["warmup"])[0]
-        # rag.client.search(collection_name=rag.collection, data=[_warmup_vec], limit=1)
+        self.rag = RAG(reset_collection=False)
+        # Warm up Milvus index to avoid cold-start latency on the first real query
+        _warmup_vec = self.rag.embeder.encode_queries(["warmup"])[0]
+        self.rag.client.search(collection_name=self.rag.collection, data=[_warmup_vec], limit=1)
 
         logger.info("Initialized HarelAgent with all subagents")
     
