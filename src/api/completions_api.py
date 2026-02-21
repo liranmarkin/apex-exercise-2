@@ -73,7 +73,7 @@ async def process_completions_request(request: ChatCompletionRequest) -> ChatCom
         try:
             # chat() now returns (answer, parsed_sources) where:
             # parsed_sources is a list of dicts with 'source', 'page', and 'type' keys
-            answer_text, parsed_sources = agent.chat(user_questions)
+            answer_text, parsed_sources = await asyncio.to_thread(agent.chat, user_questions)
             logger.info(f"Generated answer (len={len(answer_text)} chars), sources: {len(parsed_sources)}")
             
             # Build source_list from parsed_sources
