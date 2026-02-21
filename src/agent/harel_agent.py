@@ -148,6 +148,7 @@ class HarelAgent:
             raw_results = self.rag.query_collection(insurance_type_enum, rewritten_query, maximal_docs=15)
             # Deduplicate and rank documents
             rag_results = self._deduplicate_and_rank_documents(raw_results)
+            logger.info(f"RAG retrieval after deduplication:\n{rag_results}\n")
         except Exception as e:
             logger.error(f"RAG retrieval failed: {e}")
             rag_results = []
@@ -160,7 +161,7 @@ class HarelAgent:
         final_answer = self.response_agent.generate(rewritten_query, insurance_type, rag_results)
         agent3_time = time.time() - start_time
         logger.info(f"Agent 3 completed - Generated answer (Time: {agent3_time:.2f}s)")
-        logger.debug(f"Agent 3 response: {final_answer[:200]}...") if len(final_answer) > 200 else logger.debug(f"Agent 3 response: {final_answer}")
+        logger.debug(f"Agent 3 response: {final_answer}...") if len(final_answer) > 200 else logger.debug(f"Agent 3 response: {final_answer}")
         
         # Total time
         total_time = agent1_time + rewrite_time + rag_time + agent3_time
@@ -216,8 +217,6 @@ def main():
     response = agent.chat(sample_query)
     
     logger.info(f"Chatbot Response: {response}")
-    print("\nChatbot Response:")
-    print(response)
 
 
 if __name__ == "__main__":

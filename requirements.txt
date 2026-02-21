@@ -17,3 +17,4 @@ pymilvus[model]>=0.3.2
 milvus_lite>=2.5.1
 torch>=2.10.0
 transformers==44.57.6
+langchain-nebius
