@@ -13,6 +13,8 @@ FILES=(
   "dataset/dataset-output/dataset/topics-pdf-docling.json"
   "dataset/dataset-output/dataset/topics-policies-manual-html-parse.json"
   "dataset/dataset-output/rag_dumps/blogs_dump.json"
+  "dataset/dataset-output/rag_dumps/faq_dump.json"
+  "dataset/dataset-output/rag_dumps/pdf_dump.json"
   "dataset/dataset-output/rag_dumps/policies_dump.json"
   "dataset/dataset-output/test-dataset/magen-mashlim-child.html/הראל-מגן-משלים-לילד-144.json"
   "dataset/dataset-output/test-dataset/magen-mashlim-child.html/הראל-מגן-משלים-לילד-144.pdf"

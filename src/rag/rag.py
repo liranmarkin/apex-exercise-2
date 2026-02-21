@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Generator
 
@@ -9,23 +10,27 @@ from constants import DB_PATH, COLLECTION_NAME, InsuranceType
 
 logger = logging.getLogger(__name__)
 
-OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
-OPENAI_EMBEDDING_DIM = 1536
-OPENAI_BATCH_LIMIT = 2048
+NEBIUS_API_BASE = "https://api.studio.nebius.com/v1/"
+NEBIUS_EMBEDDING_MODEL = "BAAI/bge-multilingual-gemma2"
+NEBIUS_EMBEDDING_DIM = 3584
+NEBIUS_BATCH_LIMIT = 128
 
 
-class OpenAIEmbedder:
-    """OpenAI-based embedder with Hebrew support."""
+class NebiusEmbedder:
+    """Nebius-hosted BAAI/bge-multilingual-gemma2 embedder with strong Hebrew support."""
 
-    def __init__(self, model_name: str = OPENAI_EMBEDDING_MODEL):
+    def __init__(self, model_name: str = NEBIUS_EMBEDDING_MODEL):
         self.model_name = model_name
-        self.dim = OPENAI_EMBEDDING_DIM
-        self._client = OpenAI()
+        self.dim = NEBIUS_EMBEDDING_DIM
+        self._client = OpenAI(
+            base_url=NEBIUS_API_BASE,
+            api_key=os.environ.get("NEBIUS_API_KEY", ""),
+        )
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         results = []
-        for i in range(0, len(texts), OPENAI_BATCH_LIMIT):
-            batch = texts[i : i + OPENAI_BATCH_LIMIT]
+        for i in range(0, len(texts), NEBIUS_BATCH_LIMIT):
+            batch = texts[i : i + NEBIUS_BATCH_LIMIT]
             response = self._client.embeddings.create(input=batch, model=self.model_name)
             results.extend([item.embedding for item in response.data])
         return results
@@ -51,7 +56,7 @@ class RAG:
 
     @staticmethod
     def _get_embeder():
-        return OpenAIEmbedder()
+        return NebiusEmbedder()
 
     def _get_db_client(self, db_path: str):
         client = MilvusClient(db_path)
@@ -93,28 +98,52 @@ class RAG:
         res = self.client.insert(collection_name=self.collection, data=data)
         return res
 
-    def load_data_from_generator(self, generator: Generator[dict, None, None], batch_size: int = 64, on_batch_inserted: callable = None):
+    def load_data_from_generator(self, generator: Generator[dict, None, None], batch_size: int = 128, on_batch_inserted: callable = None):
+        from concurrent.futures import ThreadPoolExecutor, Future
+
         batch = []
         total = 0
         start_time = time.time()
-        for kwargs in generator:
-            batch.append(kwargs)
-            if len(batch) >= batch_size:
+        pending_future: Future | None = None
+        pending_count = 0
+
+        def _do_insert(b):
+            self._insert_batch(b)
+            return len(b)
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            for kwargs in generator:
+                batch.append(kwargs)
+                if len(batch) >= batch_size:
+                    # Wait for previous insert to finish before submitting next
+                    if pending_future is not None:
+                        pending_future.result()
+                        total += pending_count
+                        elapsed = time.time() - start_time
+                        rate = total / elapsed if elapsed > 0 else 0
+                        print(f"    Inserted {total} docs [{elapsed:.1f}s elapsed, {rate:.0f} docs/s]", flush=True)
+                        if on_batch_inserted:
+                            on_batch_inserted(pending_count, total)
+                    # Submit this batch (embedding + insert happens in thread)
+                    pending_future = pool.submit(_do_insert, batch)
+                    pending_count = len(batch)
+                    batch = []
+            # Handle remaining items
+            if pending_future is not None:
+                pending_future.result()
+                total += pending_count
+                if on_batch_inserted:
+                    on_batch_inserted(pending_count, total)
+            if batch:
                 self._insert_batch(batch)
                 total += len(batch)
-                elapsed = time.time() - start_time
-                rate = total / elapsed if elapsed > 0 else 0
-                print(f"    Inserted {total} docs [{elapsed:.1f}s elapsed, {rate:.0f} docs/s]", flush=True)
                 if on_batch_inserted:
                     on_batch_inserted(len(batch), total)
-                batch = []
-        if batch:
-            self._insert_batch(batch)
-            total += len(batch)
             elapsed = time.time() - start_time
             print(f"    Inserted {total} docs (done) [{elapsed:.1f}s total]", flush=True)
-            if on_batch_inserted:
-                on_batch_inserted(len(batch), total)
+        finally:
+            pool.shutdown(wait=True)
         return total
 
     def _insert_batch(self, batch: list[dict], max_retries: int = 3, base_delay: float = 1.0):
