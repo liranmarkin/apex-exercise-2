@@ -13,20 +13,33 @@ OPENAI_EMBEDDING_MODEL = "text-embedding-3-small"
 OPENAI_EMBEDDING_DIM = 1536
 OPENAI_BATCH_LIMIT = 2048
 
+BAAI_EMBEDDING_MODEL = "BAAI/bge-multilingual-gemma2"
+BAAI_EMBEDDING_DIM = 3584
+BAAI_BATCH_LIMIT = 2048
+
 
 class OpenAIEmbedder:
     """OpenAI-based embedder with Hebrew support."""
 
-    def __init__(self, model_name: str = OPENAI_EMBEDDING_MODEL):
+    def __init__(self, model_name: str = BAAI_EMBEDDING_MODEL):
         self.model_name = model_name
-        self.dim = OPENAI_EMBEDDING_DIM
-        self._client = OpenAI()
+        self.dim = BAAI_EMBEDDING_DIM
+        # self._client = OpenAI()
+
+        from langchain_nebius import NebiusEmbeddings
+        NEBIUS_API_KEY = "v1.CmQKHHN0YXRpY2tleS1lMDB0OGUzZDNzeDhkeXI4bnESIXNlcnZpY2VhY2NvdW50LWUwMHA1emhzNDg1bjRuZmFwMjIMCLqfyMwGEOSgybUCOgwIuaLglwcQgMOX2gJAAloDZTAw.AAAAAAAAAAGemZGoeFt6Ku8C0uYiN4JtJhgL1bUgdwSSkAgACu5DcC-3WAETfyToGkbFnGvIB3B-sVJTZQDH7nqtBV5S2XUB"
+
+        self._client = NebiusEmbeddings(
+            model=model_name,
+            api_key=NEBIUS_API_KEY
+        )
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
         results = []
-        for i in range(0, len(texts), OPENAI_BATCH_LIMIT):
-            batch = texts[i : i + OPENAI_BATCH_LIMIT]
-            response = self._client.embeddings.create(input=batch, model=self.model_name)
+        for i in range(0, len(texts), BAAI_BATCH_LIMIT):
+            batch = texts[i : i + BAAI_BATCH_LIMIT]
+            # response = self._client.embeddings.create(input=batch, model=self.model_name)
+            response = self._client.embed_documents(batch)
             results.extend([item.embedding for item in response.data])
         return results
 

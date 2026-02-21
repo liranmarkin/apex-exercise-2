@@ -47,21 +47,30 @@ def _aggregate_scores(result) -> dict:
 
 
 class RAGASEvaluator:
-    def __init__(self, judge_model: str = "gpt-4o", max_workers: int = 16):
+    def __init__(self, judge_model: str = "openai/gpt-oss-20b", max_workers: int = 16):
         self.judge_model = judge_model
         self.max_workers = max_workers
         self.results = None
 
     def _build_llm(self):
-        from langchain_openai import ChatOpenAI
+        # from langchain_openai import ChatOpenAI
+        # from src.constants import NEBIUS_API_KEY
+        NEBIUS_API_KEY = "v1.CmQKHHN0YXRpY2tleS1lMDB0OGUzZDNzeDhkeXI4bnESIXNlcnZpY2VhY2NvdW50LWUwMHA1emhzNDg1bjRuZmFwMjIMCLqfyMwGEOSgybUCOgwIuaLglwcQgMOX2gJAAloDZTAw.AAAAAAAAAAGemZGoeFt6Ku8C0uYiN4JtJhgL1bUgdwSSkAgACu5DcC-3WAETfyToGkbFnGvIB3B-sVJTZQDH7nqtBV5S2XUB"
 
-        return ChatOpenAI(model=self.judge_model, temperature=0)
+        # return ChatOpenAI(model=self.judge_model, temperature=0)
+        from langchain_nebius import ChatNebius
+        return ChatNebius(model=self.judge_model, temperature=0, api_key=NEBIUS_API_KEY)
 
     @staticmethod
     def _build_embeddings():
-        from langchain_openai import OpenAIEmbeddings
+        # from langchain_openai import OpenAIEmbeddings
+        from langchain_nebius import NebiusEmbeddings
+        NEBIUS_API_KEY = "v1.CmQKHHN0YXRpY2tleS1lMDB0OGUzZDNzeDhkeXI4bnESIXNlcnZpY2VhY2NvdW50LWUwMHA1emhzNDg1bjRuZmFwMjIMCLqfyMwGEOSgybUCOgwIuaLglwcQgMOX2gJAAloDZTAw.AAAAAAAAAAGemZGoeFt6Ku8C0uYiN4JtJhgL1bUgdwSSkAgACu5DcC-3WAETfyToGkbFnGvIB3B-sVJTZQDH7nqtBV5S2XUB"
 
-        return OpenAIEmbeddings()
+        return NebiusEmbeddings(
+            model="BAAI/bge-en-icl", 
+            api_key=NEBIUS_API_KEY
+        )
 
     # ------------------------------------------------------------------
     # Core evaluation
