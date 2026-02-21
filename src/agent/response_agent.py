@@ -79,7 +79,7 @@ class ResponseAgent:
             response = llm_with_retries.invoke(
                 answer_prompt,
                 temperature=0,           # Strictly factual
-                max_tokens=800,          # Safety ceiling
+                # max_tokens=1200,          # Safety ceiling
                 timeout=30,              # Don't let users hang forever
             )
 
