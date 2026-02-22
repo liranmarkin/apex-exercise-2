@@ -56,8 +56,7 @@ class InsuranceTypeIdentificationAgent:
         # invoke with retries
         insurance_type_str = ""
         llm_with_retries = self.llm.with_retry(
-            stop_after_attempt=3,
-            wait_exponential_jitter=True
+            stop_after_attempt=3
         )
 
         try:
