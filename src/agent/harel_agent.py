@@ -103,85 +103,53 @@ class HarelAgent:
         
         return result
     
-    def _parse_sources_from_answer(self, answer: str, rag_results: list) -> list:
+    def _build_parsed_sources(self, source_strings: list, rag_results: list) -> list:
         """
-        Parse sources from the formatted answer text and create a structured list.
-        
-        Extracts the "מקורות:" section from the answer and creates a list of dicts
-        with source URLs, page numbers, and their types.
-        
-        Expected format in answer:
-        מקורות:
-        מקור 1: https://www.harel.co.il/car-insurance/coverage, עמוד 12
-        מקור 2: https://www.harel.co.il/car-insurance/terms, עמוד 25
-        
+        Build structured sources list from the LLM's JSON sources output.
+
         Args:
-            answer: The full answer text (may include sources section)
+            source_strings: List of source strings from LLM, e.g. ["https://example.com, עמוד 5"]
             rag_results: The RAG results containing source type information
-            
+
         Returns:
             List of dicts with 'source' (URL), 'page' (page number), and 'type' keys
         """
+        import re
         sources_list = []
-        
-        # Check if answer contains sources section
-        if "מקורות:" not in answer:
-            return sources_list
-        
-        # Split by "מקורות:" to get the sources section
-        parts = answer.split("מקורות:")
-        if len(parts) < 2:
-            return sources_list
-        
-        sources_section = parts[1].strip()
-        
-        # Parse each source line: "מקור X: URL, עמוד PAGE" or "מקור X: URL"
-        for line in sources_section.split("\n"):
-            line = line.strip()
-            if not line or not line.startswith("מקור"):
+
+        for src in source_strings:
+            src = src.strip()
+            if not src:
                 continue
-            
-            # Extract the URL part (after the colon)
-            if ":" not in line:
-                continue
-            
-            # Get the part after "מקור X: "
-            parts = line.split(":", 1)
-            if len(parts) < 2:
-                continue
-            
-            rest = parts[1].strip()
-            
-            # Extract URL and page number
-            page_number = -1  # default value for unknown page
-            url_part = rest
-            
-            if "," in rest:
-                # Format: "URL, עמוד PAGE"
-                url_part = rest.split(",")[0].strip()
-                page_part = rest.split(",", 1)[1].strip()
-                
-                # Try to extract page number from "עמוד PAGE"
-                if "עמוד" in page_part:
-                    page_str = page_part.replace("עמוד", "").strip()
-                    try:
-                        page_number = int(page_str)
-                    except ValueError:
-                        page_number = -1
-            
+
+            # Extract URL and optional page number
+            page_number = -1
+            url_part = src
+
+            # Try to extract page number from patterns like "URL, עמוד 5" or "URL, page 5"
+            page_match = re.search(r',\s*עמוד\s*(\d+)', src)
+            if not page_match:
+                page_match = re.search(r',\s*page\s*(\d+)', src, re.IGNORECASE)
+
+            if page_match:
+                page_number = int(page_match.group(1))
+                url_part = src[:page_match.start()].strip()
+            elif ',' in src:
+                url_part = src.split(',')[0].strip()
+
             # Map URL to source_type from rag_results
-            source_type = "document"  # default type
+            source_type = "document"
             for result in rag_results:
                 if result.get("entity", {}).get("url", "") == url_part:
                     source_type = result.get("entity", {}).get("source_type", "document")
                     break
-            
+
             sources_list.append({
                 "source": url_part,
                 "page": page_number,
                 "type": source_type
             })
-        
+
         return sources_list
     
     def chat(self, user_input: str, generate_stats: bool = False):
@@ -239,13 +207,15 @@ class HarelAgent:
         # Agent 3: Generate Answer with RAG using rewritten query and pre-retrieved results
         logger.info("Starting answer generation with RAG...")
         start_time = time.time()
-        final_answer = self.response_agent.generate(rewritten_query, insurance_type, rag_results)
+        result = self.response_agent.generate(rewritten_query, insurance_type, rag_results)
         agent3_time = time.time() - start_time
+        final_answer = result["answer"]
+        source_strings = result["sources"]
         logger.info(f"Agent 3 completed - Generated answer (Time: {agent3_time:.2f}s)")
-        logger.debug(f"Agent 3 response: {final_answer}...") if len(final_answer) > 200 else logger.debug(f"Agent 3 response: {final_answer}")
-        
-        # Parse sources from the final answer if they exist
-        parsed_sources = self._parse_sources_from_answer(final_answer, rag_results)
+        logger.debug(f"Agent 3 response: {final_answer[:200]}...")
+
+        # Build parsed_sources from structured JSON output
+        parsed_sources = self._build_parsed_sources(source_strings, rag_results)
         logger.info(f"Parsed {len(parsed_sources)} sources from the answer")
         
         # Total time

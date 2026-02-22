@@ -69,11 +69,12 @@ def generate_baseline_answers(
         sample = samples[idx]
         start = time.time()
         # Use ResponseAgent with empty RAG results (null context)
-        answer = response_agent.generate(
+        result = response_agent.generate(
             user_input=sample['question'],
             insurance_type="UNKNOWN",  # Null type
             rag_results=[]  # No context
         )
+        answer = result["answer"]
         latency = time.time() - start
         return idx, answer, [], latency
 
@@ -230,7 +231,7 @@ def run_evaluation(
     else:
         metrics = evaluator.evaluate_baseline(dataset)
 
-    citation_score = evaluator.compute_citation_score(samples, answers)
+    citation_score = evaluator.compute_citation_score(samples, answers, retrieved_sources)
     avg_latency = sum(latencies) / len(latencies)
     efficiency_score = max(0.0, 1.0 - avg_latency / 30.0)
     competition_score = evaluator.compute_competition_score(

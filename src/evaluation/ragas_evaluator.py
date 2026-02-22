@@ -109,18 +109,32 @@ class RAGASEvaluator:
     def compute_citation_score(
         samples: list[dict],
         answers: list[str],
+        retrieved_sources: list[list[dict]] | None = None,
     ) -> float:
         """
-        Basic citation accuracy: check whether the answer mentions
-        the expected source file or page number.
+        Citation accuracy: check whether the expected source file or page
+        appears in the answer text OR in the retrieved sources list.
         """
         if not samples:
             return 0.0
 
         hits = 0
-        for sample, answer in zip(samples, answers):
-            file_mentioned = sample["source_file"] in answer
-            page_mentioned = str(sample["source_page"]) in answer
+        for i, (sample, answer) in enumerate(zip(samples, answers)):
+            expected_file = sample["source_file"]
+            expected_page = str(sample["source_page"])
+
+            # Check answer text
+            file_mentioned = expected_file in answer
+            page_mentioned = expected_page in answer
+
+            # Check retrieved sources list (from structured JSON output)
+            if not file_mentioned and retrieved_sources and i < len(retrieved_sources):
+                for src in retrieved_sources[i]:
+                    src_url = src.get("source", "")
+                    if expected_file in src_url:
+                        file_mentioned = True
+                        break
+
             if file_mentioned or page_mentioned:
                 hits += 1
 
